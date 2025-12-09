@@ -1,0 +1,2989 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Онлайн доска с формулами, текстом и автофигурами</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            color: white;
+            overflow-x: hidden;
+        }
+        .container {
+            width: 100%;
+            max-width: 1600px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+            flex: 1;
+        }
+        header { text-align: center; margin-bottom: 10px; width: 100%; flex-shrink: 0; }
+        h1 { font-size: 2.5rem; margin-bottom: 10px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
+        .subtitle { font-size: 1.2rem; opacity: 0.9; margin-bottom: 20px; }
+        .info-box {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 15px;
+            margin-bottom: 20px;
+            width: 100%;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.2);
+            flex-shrink: 0;
+        }
+        .board-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .board-id-container { display: flex; align-items: center; gap: 10px; }
+        .board-id {
+            font-family: monospace;
+            background: rgba(255,255,255,0.2);
+            padding: 5px 15px;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s;
+            border: 1px solid rgba(255,255,255,0.3);
+        }
+        .board-id:hover { background: rgba(255,255,255,0.3); }
+        .board-actions { display: flex; gap: 10px; }
+        .btn-small {
+            padding: 8px 15px;
+            font-size: 0.9rem;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            transition: all 0.3s;
+            font-weight: bold;
+        }
+        .btn-primary { background: #4CAF50; color: white; }
+        .btn-primary:hover { background: #45a049; transform: translateY(-2px); }
+        .btn-info { background: #2196F3; color: white; }
+        .btn-info:hover { background: #1976D2; transform: translateY(-2px); }
+        .main-content {
+            display: flex;
+            flex-direction: row;
+            gap: 20px;
+            width: 100%;
+            flex-wrap: wrap;
+            flex: 1;
+            min-height: 0;
+        }
+        .canvas-container {
+            flex: 4;
+            min-width: 600px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            position: relative;
+            height: 100vh;
+            min-height: 50vh;
+            max-height: 150vh;
+            display: flex;
+            flex-direction: column;
+            overflow: auto;
+        }
+        #drawingCanvas {
+            display: block;
+            background: white;
+            cursor: crosshair;
+            width: 100%;
+            height: 100% !important;
+        }
+        #previewCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: none;
+        }
+        .canvas-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        
+        /* Стили для контейнеров формул и текста */
+        .formula-container, .text-container {
+            position: absolute;
+            cursor: move;
+            pointer-events: auto;
+            user-select: none;
+            padding: 10px;
+            /*background: rgba(255, 255, 255, 0.95);*/
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            border: 0px solid transparent;
+            transition: border-color 0.3s, transform 0.2s;
+            min-width: 100px;
+            min-height: 50px;
+            max-width: 400px;
+            word-wrap: break-word;
+            color: #000000;
+        }
+
+        .formula-container:hover, .text-container:hover {
+            border-color: #2196F3;
+        }
+
+        .formula-container.active, .text-container.active {
+            border-color: #2196F3;
+            box-shadow: 0 0 15px rgba(33, 150, 243, 0.5);
+            z-index: 1000;
+        }
+
+        .formula-actions, .text-actions {
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            display: none;
+        }
+
+        .formula-container.active .formula-actions,
+        .text-container.active .text-actions {
+            display: flex;
+            gap: 5px;
+        }
+
+        .formula-btn, .text-btn {
+            background: #f44336;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 25px;
+            height: 25px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+        }
+
+        .formula-btn.edit, .text-btn.edit {
+            background: #ff9800;
+            right: 30px;
+        }
+        
+        .tools-panel {
+            flex: 1;
+            min-width: 350px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-height: 150vh;
+            min-height: 50vh;
+            height: 100vh;
+            overflow-y: auto;
+        }
+        .panel-section {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        .tool-title {
+            font-size: 1.3rem;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid rgba(255,255,255,0.3);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .color-picker {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .color-option {
+            width: 100%;
+            aspect-ratio: 1;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 3px solid transparent;
+            transition: transform 0.2s, border 0.2s;
+        }
+        .color-option:hover { transform: scale(1.1); }
+        .color-option.active { border: 3px solid white; box-shadow: 0 0 10px rgba(255,255,255,0.8); }
+        .brush-sizes { display: flex; justify-content: space-between; margin-top: 10px; }
+        .brush-size {
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: transform 0.2s;
+            color: #333;
+            font-weight: bold;
+        }
+        .brush-size.active { border: 2px solid #ffd700; transform: scale(1.2); }
+        .shape-buttons {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .shape-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            padding: 15px 5px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s;
+            color: white;
+            font-size: 0.8rem;
+            text-align: center;
+            min-height: 80px;
+        }
+        .shape-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-3px);
+            border-color: #4CAF50;
+        }
+        .shape-btn.active {
+            background: rgba(76, 175, 80, 0.3);
+            border-color: #4CAF50;
+            box-shadow: 0 0 15px rgba(76, 175, 80, 0.5);
+        }
+        .shape-icon { font-size: 1.5rem; margin-bottom: 5px; }
+        .controls { display: flex; flex-direction: column; gap: 15px; }
+        .btn {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        .btn-warning { background: #ff9800; color: white; }
+        .btn-warning:hover { background: #f57c00; transform: translateY(-2px); }
+        .btn-secondary { background: #f44336; color: white; }
+        .btn-secondary:hover { background: #d32f2f; transform: translateY(-2px); }
+        .mode-toggle {
+            display: flex;
+            background: rgba(255,255,255,0.1);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        .mode-btn {
+            flex: 1;
+            padding: 10px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: none;
+            color: white;
+            background: transparent;
+            font-weight: bold;
+        }
+        .mode-btn.active { background: rgba(76, 175, 80, 0.5); }
+        .text-input, .latex-textarea, .text-textarea {
+            width: 100%;
+            padding: 12px;
+            border-radius: 10px;
+            border: 2px solid rgba(255,255,255,0.3);
+            background: rgba(255,255,255,0.9);
+            font-size: 1rem;
+            margin-bottom: 10px;
+            font-family: monospace;
+            color: #000000;
+            resize: vertical;
+            min-height: 100px;
+            max-height: 200px;
+        }
+        .text-input:focus, .latex-textarea:focus, .text-textarea:focus {
+            outline: none;
+            border-color: #2196F3;
+            background: white;
+        }
+        .formula-preview {
+            width: 100%;
+            min-height: 80px;
+            padding: 15px;
+            background: white;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            color: black;
+            font-size: 1.2rem;
+            text-align: center;
+            overflow: auto;
+            border: 2px dashed #ccc;
+        }
+        .formula-examples { margin-top: 15px; font-size: 0.9rem; opacity: 0.9; }
+        .formula-example {
+            background: rgba(255,255,255,0.2);
+            padding: 8px;
+            border-radius: 5px;
+            margin: 5px 0;
+            cursor: pointer;
+            transition: background 0.3s;
+            font-family: monospace;
+        }
+        .users-list { max-height: 200px; overflow-y: auto; margin-top: 10px; }
+        .user-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px;
+            border-radius: 5px;
+            margin: 5px 0;
+            background: rgba(255,255,255,0.1);
+        }
+        .user-color { width: 20px; height: 20px; border-radius: 50%; border: 2px solid white; }
+        .status {
+            padding: 10px;
+            border-radius: 10px;
+            text-align: center;
+            margin-top: 10px;
+            background: rgba(0,0,0,0.2);
+            font-size: 0.9rem;
+            flex-shrink: 0;
+        }
+        .connected { background: rgba(76, 175, 80, 0.3); }
+        .disconnected { background: rgba(244, 67, 54, 0.3); }
+        footer {
+            margin-top: 20px;
+            text-align: center;
+            opacity: 0.8;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+        }
+        .latex-output {
+            font-size: 1.5em;
+            text-align: center;
+            padding: 10px;
+            color: #000000 !important;
+        }
+        .text-content {
+            font-size: 16px;
+            line-height: 1.5;
+            padding: 10px;
+            color: #000000;
+            word-break: break-word;
+        }
+        .shape-info {
+            background: rgba(255,255,255,0.1);
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+        .text-settings { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
+        .text-size-select, .text-font-select {
+            flex: 1;
+            min-width: 120px;
+            padding: 8px;
+            border-radius: 5px;
+            border: 2px solid rgba(255,255,255,0.3);
+            background: rgba(255,255,255,0.9);
+            color: #000000;
+        }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 15px;
+            z-index: 9999;
+            animation: slideIn 0.3s ease-out;
+            color: white;
+        }
+        .notification.success { background: #4CAF50; }
+        .notification.error { background: #f44336; }
+        .notification.info { background: #2196F3; }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @media (max-width: 1200px) {
+            .main-content { flex-direction: column; }
+            .canvas-container, .tools-panel { width: 100%; min-width: unset; }
+            .canvas-container { height: 40vh !important; }
+            h1 { font-size: 2rem; }
+            .tools-panel { max-height: none; }
+            .board-info { flex-direction: column; align-items: stretch; }
+            .board-actions { justify-content: center; }
+        }
+        @media (max-width: 768px) {
+            .canvas-container { height: 35vh !important; min-height: 250px; }
+            .container { padding: 10px; }
+            .shape-buttons { grid-template-columns: repeat(2, 1fr); }
+            h1 { font-size: 1.8rem; }
+            .subtitle { font-size: 1rem; }
+        }
+        @media (max-width: 480px) {
+            .canvas-container { height: 30vh !important; min-height: 200px; }
+            .shape-buttons { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+            .shape-btn { padding: 10px 3px; min-height: 70px; font-size: 0.7rem; }
+            .shape-icon { font-size: 1.2rem; }
+            .board-id { font-size: 0.9rem; padding: 4px 10px; }
+            .btn-small { padding: 6px 12px; font-size: 0.8rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-paint-brush"></i> Онлайн доска с формулами, текстом и автофигурами</h1>
+            <p class="subtitle">Рисуйте, добавляйте формулы и текст в реальном времени!</p>
+        </header>
+        
+        <div class="info-box">
+            <div class="board-info">
+                <div>
+                    <p><i class="fas fa-users"></i> <strong id="usersCount">1</strong> пользователей онлайн</p>
+                </div>
+                <div class="board-id-container">
+                    <span><i class="fas fa-door-closed"></i> ID доски:</span>
+                    <div class="board-id" id="boardIdDisplay" title="Нажмите, чтобы скопировать ID">Загрузка...</div>
+                </div>
+                <div class="board-actions">
+                    <button class="btn-small btn-info" id="copyLinkBtn">
+                        <i class="fas fa-copy"></i> Копировать ссылку
+                    </button>
+                    <button class="btn-small btn-primary" id="newBoardBtn">
+                        <i class="fas fa-plus"></i> Новая доска
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="main-content">
+            <div class="canvas-container" id="canvas-container">
+                <canvas id="drawingCanvas"></canvas>
+                <canvas id="previewCanvas"></canvas>
+                <div id="formulaOverlay" class="canvas-overlay"></div>
+                <div id="textOverlay" class="canvas-overlay"></div>
+            </div>
+            
+            <div class="tools-panel">
+                <div class="panel-section">
+                    <div class="mode-toggle">
+                        <button class="mode-btn active" id="drawModeBtn">
+                            <i class="fas fa-paint-brush"></i> Рисование
+                        </button>
+                        <button class="mode-btn" id="shapeModeBtn">
+                            <i class="fas fa-shapes"></i> Фигуры
+                        </button>
+                        <button class="mode-btn" id="formulaModeBtn">
+                            <i class="fas fa-square-root-alt"></i> Формулы
+                        </button>
+                        <button class="mode-btn" id="textModeBtn">
+                            <i class="fas fa-font"></i> Текст
+                        </button>
+                        <button class="mode-btn" id="imageModeBtn">
+                            <i class="fas fa-image"></i> Изображение
+                        </button>                        
+                    </div>
+                </div>
+                
+                <div class="panel-section" id="drawingPanel">
+                    <h3 class="tool-title"><i class="fas fa-palette"></i> Рисование</h3>
+                    <div class="color-picker">
+                        <div class="color-option active" style="background-color: #000000;" data-color="#000000"></div>
+                        <div class="color-option" style="background-color: #ff0000;" data-color="#ff0000"></div>
+                        <div class="color-option" style="background-color: #00ff00;" data-color="#00ff00"></div>
+                        <div class="color-option" style="background-color: #0000ff;" data-color="#0000ff"></div>
+                        <div class="color-option" style="background-color: #ffff00;" data-color="#ffff00"></div>
+                        <div class="color-option" style="background-color: #ff00ff;" data-color="#ff00ff"></div>
+                        <div class="color-option" style="background-color: #00ffff;" data-color="#00ffff"></div>
+                        <div class="color-option" style="background-color: #ff9900;" data-color="#ff9900"></div>
+                        <div class="color-option" style="background-color: #9900ff;" data-color="#9900ff"></div>
+                        <div class="color-option" style="background-color: #ffffff; border: 1px solid #ccc;" data-color="#ffffff"></div>
+                    </div>
+                    
+                    <div class="tool-title"><i class="fas fa-brush"></i> Размер кисти</div>
+                    <div class="brush-sizes">
+                        <div class="brush-size active" data-size="2">•</div>
+                        <div class="brush-size" data-size="5">••</div>
+                        <div class="brush-size" data-size="10">•••</div>
+                        <div class="brush-size" data-size="15">••••</div>
+                        <div class="brush-size" data-size="20">•••••</div>
+                    </div>
+                </div>
+                
+                <div class="panel-section" id="shapesPanel" style="display: none;">
+                    <h3 class="tool-title"><i class="fas fa-shapes"></i> Автофигуры</h3>
+                    <div class="shape-buttons">
+                        <div class="shape-btn" data-shape="line"><div class="shape-icon">─</div><div>Прямая</div></div>
+                        <div class="shape-btn" data-shape="circle"><div class="shape-icon">○</div><div>Круг</div></div>
+                        <div class="shape-btn" data-shape="square"><div class="shape-icon">□</div><div>Квадрат</div></div>
+                        <div class="shape-btn" data-shape="rectangle"><div class="shape-icon">▭</div><div>Прямоугольник</div></div>
+                        <div class="shape-btn" data-shape="triangle"><div class="shape-icon">△</div><div>Треугольник</div></div>
+                        <div class="shape-btn" data-shape="equilateral"><div class="shape-icon">△</div><div>Равносторонний</div></div>
+                        <div class="shape-btn" data-shape="right"><div class="shape-icon">⊿</div><div>Прямоугольный</div></div>
+                        <div class="shape-btn" data-shape="isosceles"><div class="shape-icon">∆</div><div>Равнобедренный</div></div>
+                        <div class="shape-btn" data-shape="obtuse"><div class="shape-icon">△</div><div>Тупоугольный</div></div>
+                        <div class="shape-btn" data-shape="diamond"><div class="shape-icon">◇</div><div>Ромб</div></div>
+                        <div class="shape-btn" data-shape="arrow"><div class="shape-icon">→</div><div>Стрелка</div></div>
+                        <div class="shape-btn" data-shape="cube"><div class="shape-icon">□</div><div>Куб</div></div>
+                        <div class="shape-btn" data-shape="parallelepiped"><div class="shape-icon">▯</div><div>Параллелепипед</div></div>
+                        <div class="shape-btn" data-shape="pyramid"><div class="shape-icon">△</div><div>Пирамида</div></div>
+                    </div>
+                    <div class="shape-info" id="shapeInfo">Выберите фигуру и рисуйте на холсте</div>
+                </div>
+                
+                <div class="panel-section" id="formulasPanel" style="display: none;">
+                    <h3 class="tool-title"><i class="fas fa-square-root-alt"></i> Формулы LaTeX</h3>
+                    
+                    <div class="formula-preview" id="formulaPreview">
+                        <div class="latex-output">Введите формулу для предпросмотра</div>
+                    </div>
+                    
+                    <textarea class="latex-textarea" id="latexInput" 
+                        placeholder="Введите формулу LaTeX (например: E = mc^2 или многострочную формулу)"
+                        rows="4"></textarea>
+                    
+                    <div class="controls">
+                        <button class="btn btn-primary" id="addFormulaBtn">
+                            <i class="fas fa-plus-circle"></i> Добавить формулу
+                        </button>
+                        <button class="btn btn-warning" id="clearFormulaBtn">
+                            <i class="fas fa-backspace"></i> Очистить поле
+                        </button>
+                    </div>
+                    
+                    <div class="formula-examples">
+                        <p>Примеры формул:</p>
+                        <div class="formula-example" onclick="insertExample('E = mc^2')">E = mc^2</div>
+                        <div class="formula-example" onclick="insertExample('\\frac{a}{b}')">\frac{a}{b} - Дробь</div>
+                        <div class="formula-example" onclick="insertExample('\\sqrt{x^2 + y^2}')">\sqrt{x^2 + y^2} - Корень</div>
+                        <div class="formula-example" onclick="insertExample('\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}')">\sum_{i=1}^{n} i - Сумма</div>
+                        <div class="formula-example" onclick="insertExample('\\int_{a}^{b} f(x) dx')">\int_{a}^{b} f(x) dx - Интеграл</div>
+                    </div>
+                </div>
+                
+                <div class="panel-section" id="textPanel" style="display: none;">
+                    <h3 class="tool-title"><i class="fas fa-font"></i> Текст</h3>
+                    
+                    <div class="text-settings">
+                        <select class="text-size-select" id="textSizeSelect">
+                            <option value="12px">Маленький</option>
+                            <option value="16px" selected>Средний</option>
+                            <option value="20px">Большой</option>
+                            <option value="24px">Очень большой</option>
+                            <option value="32px">Заголовок</option>
+                        </select>
+                        
+                        <select class="text-font-select" id="textFontSelect">
+                            <option value="Arial, sans-serif" selected>Arial</option>
+                            <option value="'Times New Roman', serif">Times New Roman</option>
+                            <option value="'Courier New', monospace">Courier New</option>
+                            <option value="Georgia, serif">Georgia</option>
+                            <option value="Verdana, sans-serif">Verdana</option>
+                        </select>
+                    </div>
+                    
+                    <textarea class="text-textarea" id="textInput" 
+                        placeholder="Введите текст (поддерживается многострочный текст)"
+                        rows="4"></textarea>
+                    
+                    <div class="controls">
+                        <button class="btn btn-primary" id="addTextBtn">
+                            <i class="fas fa-plus-circle"></i> Добавить текст
+                        </button>
+                        <button class="btn btn-warning" id="clearTextBtn">
+                            <i class="fas fa-backspace"></i> Очистить поле
+                        </button>
+                    </div>
+                    
+                    <div class="formula-examples">
+                        <p>Примеры использования:</p>
+                        <div class="formula-example" onclick="insertTextExample('Заголовок\n---\nОсновной текст')">Многострочный текст</div>
+                        <div class="formula-example" onclick="insertTextExample('Список:\n1. Первый пункт\n2. Второй пункт\n3. Третий пункт')">Список</div>
+                        <div class="formula-example" onclick="insertTextExample('Примечание: важная информация')">Примечание</div>
+                    </div>
+                </div>
+                
+                <div class="panel-section" id="imagePanel" style="display: none;">
+                    <h3 class="tool-title"><i class="fas fa-image"></i> Картинка</h3>
+
+                    <input type="file" id="imageUpload" accept="image/*"
+                        style="padding: 10px; background: white; border-radius: 10px; color: black; width: 100%; margin-bottom: 10px;">
+
+                    <div class="controls">
+                        <button class="btn btn-primary" id="addImageBtn">
+                            <i class="fas fa-plus-circle"></i> Добавить изображение
+                        </button>
+                    </div>
+
+                    <p style="font-size: 0.9rem; opacity: 0.9; margin-top: 10px;">
+                        После добавления изображение можно перетаскивать мышью. Для масштабирования используйте колесико мыши.
+                    </p>
+                </div>
+                
+                <div class="panel-section">
+                    <h3 class="tool-title"><i class="fas fa-sliders-h"></i> Управление</h3>
+                    <div class="controls">
+                        <button class="btn btn-primary" id="clearBtn">
+                            <i class="fas fa-trash-alt"></i> Очистить доску
+                        </button>
+                        <button class="btn btn-warning" id="undoBtn">
+                            <i class="fas fa-undo"></i> Отменить
+                        </button>
+                        <button class="btn btn-info" id="saveBtn">
+                            <i class="fas fa-download"></i> Сохранить
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="panel-section">
+                    <h3 class="tool-title"><i class="fas fa-users"></i> Онлайн (<span id="liveUsersCount">1</span>)</h3>
+                    <div class="users-list" id="usersList">
+                        <div class="user-item">
+                            <div class="user-color" style="background: #4CAF50;"></div>
+                            <span>Вы</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="status connected" id="connectionStatus">
+                    <i class="fas fa-wifi"></i> Подключено к серверу
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            <p>Рисуйте, добавляйте формулы и текст вместе с друзьями! Все изменения видны в реальном времени.</p>
+            <p><i class="fa-solid fa-caret-left"></i><i class="fa-solid fa-computer-mouse"></i> - рисовать, <i class="fa-solid fa-computer-mouse"></i><i class="fa-solid fa-caret-right"></i> - ластик, Enter - добавить формулу/текст, Delete - удалить выбранное</p>
+        </footer>
+    </div>
+
+    <script>
+// ====== НАЧАЛО: Класс для кэширования рисования ======
+class DrawingBuffer {
+    constructor(socket, boardId) {
+        this.socket = socket;
+        this.boardId = boardId;
+        this.localBuffer = [];
+        this.batchSize = 10;
+        this.batchInterval = 100;
+        this.isOnline = true;
+        this.lastServerTime = 0;
+        this.latency = 0;
+        this.batchTimer = null;
+        this.pingInterval = null;
+        
+        this.setupEventListeners();
+    }
+    
+    setupEventListeners() {
+        // Отправка пакетов только если есть данные
+        this.batchTimer = setInterval(() => {
+            if (this.localBuffer.length > 0 && this.isOnline) {
+                this.sendBatch();
+            }
+        }, this.batchInterval);
+        
+        // Пинг для проверки лага
+        this.pingInterval = setInterval(() => {
+            if (this.isOnline) {
+                this.socket.emit('ping_drawing', {
+                    client_time: Date.now() / 1000
+                }, (response) => {
+                    if (response && response.latency) {
+                        this.latency = response.latency;
+                        this.adjustBatchSize();
+                    }
+                });
+            }
+        }, 5000);
+    }
+    
+    addDrawing(drawingData) {
+        // Добавляем временную метку и ID
+        drawingData.client_timestamp = Date.now() / 1000;
+        drawingData.id = `draw_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Сохраняем в локальный буфер
+        this.localBuffer.push(drawingData);
+        
+        // Немедленно отображаем локально
+        this.drawLocally(drawingData);
+        
+        // Если буфер переполнен, отправляем немедленно
+        if (this.localBuffer.length >= 50) {
+            this.sendBatch();
+        }
+    }
+    
+    sendBatch() {
+        if (this.localBuffer.length === 0 || !this.isOnline) return;
+        
+        const batch = [...this.localBuffer];
+        this.localBuffer = [];
+        
+        this.socket.emit('batch_drawing', {
+            drawings: batch,
+            batch_id: `batch_${Date.now()}`,
+            board_id: this.boardId
+        }, (response) => {
+            if (response && response.status === 'ok') {
+                console.log(`Отправлен пакет: ${response.count} рисунков`);
+            } else {
+                // Возвращаем в буфер при ошибке
+                this.localBuffer = [...batch, ...this.localBuffer];
+                console.warn('Ошибка отправки пакета, возвращаем в буфер');
+            }
+        });
+    }
+    
+    drawLocally(drawingData) {
+        // Рисуем локально на основном холсте
+        ctx.beginPath();
+        ctx.lineWidth = drawingData.brushSize || currentBrushSize;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        
+        if (drawingData.type === 'eraser') {
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.strokeStyle = 'rgba(0,0,0,1)';
+        } else {
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.strokeStyle = drawingData.color || currentColor;
+        }
+        
+        ctx.moveTo(drawingData.lastX, drawingData.lastY);
+        ctx.lineTo(drawingData.x, drawingData.y);
+        ctx.stroke();
+        ctx.closePath();
+    }
+    
+    adjustBatchSize() {
+        // Настройка размера пакета в зависимости от лага
+        if (this.latency > 0.5) { // Высокий лаг
+            this.batchSize = 20;
+            this.batchInterval = 200;
+        } else if (this.latency > 0.2) { // Средний лаг
+            this.batchSize = 15;
+            this.batchInterval = 150;
+        } else { // Низкий лаг
+            this.batchSize = 10;
+            this.batchInterval = 100;
+        }
+        
+        // Перезапускаем таймер
+        if (this.batchTimer) {
+            clearInterval(this.batchTimer);
+        }
+        this.batchTimer = setInterval(() => {
+            if (this.localBuffer.length > 0 && this.isOnline) {
+                this.sendBatch();
+            }
+        }, this.batchInterval);
+    }
+    
+    destroy() {
+        // Отправляем оставшиеся данные
+        if (this.localBuffer.length > 0) {
+            this.sendBatch();
+        }
+        
+        // Очищаем таймеры
+        if (this.batchTimer) {
+            clearInterval(this.batchTimer);
+        }
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+        }
+        
+        this.localBuffer = [];
+    }
+}
+// ====== КОНЕЦ: Класс для кэширования рисования ======        
+        // Получаем board_id из URL
+        const urlParams = new URLSearchParams(window.location.search);
+        let boardId = urlParams.get('id');
+        
+        if (!boardId) {
+            window.location.href = '/';
+        }
+        
+        // Отображаем ID доски
+        document.getElementById('boardIdDisplay').textContent = boardId;
+        
+        // Инициализация WebSocket соединения с передачей board_id
+        const socket = io({
+            query: { board_id: boardId }
+        });
+// Вставьте этот код после создания socket соединения:
+// const socket = io({ query: { board_id: boardId } });
+
+// Инициализация буфера рисования
+let drawingBuffer = null;
+
+// Создаем буфер после подключения
+socket.on('connect', () => {
+    console.log('Подключено к серверу, доска ID:', boardId);
+    connectionStatus.className = 'status connected';
+    connectionStatus.innerHTML = '<i class="fas fa-wifi"></i> Подключено к серверу';
+    showNotification('Подключено к доске', 'success');
+    
+    // Инициализируем буфер рисования
+    if (!drawingBuffer) {
+        drawingBuffer = new DrawingBuffer(socket, boardId);
+    }
+});
+
+socket.on('disconnect', () => {
+    console.log('Отключено от сервера');
+    connectionStatus.className = 'status disconnected';
+    connectionStatus.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Отключено от сервера';
+    showNotification('Отключено от сервера', 'error');
+    
+    // Очищаем буфер при отключении
+    if (drawingBuffer) {
+        drawingBuffer.isOnline = false;
+    }
+});        
+        
+        // Элементы DOM
+        const canvas = document.getElementById('drawingCanvas');
+        const ctx = canvas.getContext('2d');
+        const previewCanvas = document.getElementById('previewCanvas');
+        const previewCtx = previewCanvas.getContext('2d');
+        const formulaOverlay = document.getElementById('formulaOverlay');
+        const textOverlay = document.getElementById('textOverlay');
+        const latexInput = document.getElementById('latexInput');
+        const textInput = document.getElementById('textInput');
+        const formulaPreview = document.getElementById('formulaPreview');
+        const addFormulaBtn = document.getElementById('addFormulaBtn');
+        const clearFormulaBtn = document.getElementById('clearFormulaBtn');
+        const addTextBtn = document.getElementById('addTextBtn');
+        const clearTextBtn = document.getElementById('clearTextBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const undoBtn = document.getElementById('undoBtn');
+        const saveBtn = document.getElementById('saveBtn');
+        const colorOptions = document.querySelectorAll('.color-option');
+        const brushSizes = document.querySelectorAll('.brush-size');
+        const usersList = document.getElementById('usersList');
+        const usersCount = document.getElementById('usersCount');
+        const liveUsersCount = document.getElementById('liveUsersCount');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const textSizeSelect = document.getElementById('textSizeSelect');
+        const textFontSelect = document.getElementById('textFontSelect');
+        const boardIdDisplay = document.getElementById('boardIdDisplay');
+        const copyLinkBtn = document.getElementById('copyLinkBtn');
+        const newBoardBtn = document.getElementById('newBoardBtn');
+        
+        // Элементы режимов
+        const drawModeBtn = document.getElementById('drawModeBtn');
+        const shapeModeBtn = document.getElementById('shapeModeBtn');
+        const formulaModeBtn = document.getElementById('formulaModeBtn');
+        const textModeBtn = document.getElementById('textModeBtn');
+        const imageModeBtn = document.getElementById('imageModeBtn');
+        const drawingPanel = document.getElementById('drawingPanel');
+        const shapesPanel = document.getElementById('shapesPanel');
+        const formulasPanel = document.getElementById('formulasPanel');
+        const textPanel = document.getElementById('textPanel');
+        const imagePanel = document.getElementById('imagePanel');
+        const shapeButtons = document.querySelectorAll('.shape-btn');
+        const shapeInfo = document.getElementById('shapeInfo');
+        const imageUpload = document.getElementById('imageUpload');
+        const addImageBtn = document.getElementById('addImageBtn');
+        
+        // Инициализация canvas с правильными размерами
+        function initCanvas() {
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            previewCanvas.width = container.clientWidth;
+            previewCanvas.height = container.clientHeight;
+            
+            // Очищаем canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+        }
+        
+        initCanvas();
+        
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                initCanvas();
+                redrawAll();
+            }, 100);
+        });
+// Очистка при закрытии страницы
+window.addEventListener('beforeunload', () => {
+    if (drawingBuffer) {
+        drawingBuffer.destroy();
+    }
+});        
+        
+        // Начальные настройки рисования
+        let currentColor = '#000000';
+        let currentBrushSize = 5;
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+        
+        // Для управления элементами
+        let formulas = []; // Массив для хранения объектов формул
+        let texts = [];    // Массив для хранения объектов текста
+        let shapes = [];   // Массив для хранения объектов фигур
+        let drawings = []; // Массив для хранения объектов рисунков
+        let images = [];   // Массив для хранения объектов изображений
+        
+        let selectedElement = null;
+        let isDraggingElement = false;
+        let dragOffsetX = 0;
+        let dragOffsetY = 0;
+        
+        let uploadedImageData = null;
+        let selectedImage = null;
+        let isDraggingImage = false;
+        let imageDragOffsetX = 0;
+        let imageDragOffsetY = 0;
+        
+        let selectedShape = null;
+        let isDraggingShape = false;
+        let shapeDragOffsetX = 0;
+        let shapeDragOffsetY = 0;
+        
+        // Для рисования фигур
+        let currentMode = 'draw';
+        let currentShape = null;
+        let isDrawingShape = false;
+        let shapeStartX = 0;
+        let shapeStartY = 0;
+        
+        // Настройки текста по умолчанию
+        let currentTextSize = '16px';
+        let currentTextFont = 'Arial, sans-serif';
+        
+        // Функция для показа уведомлений
+        function showNotification(message, type = 'info') {
+            const existingNotification = document.querySelector('.notification');
+            if (existingNotification) {
+                existingNotification.remove();
+            }
+            
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.innerHTML = `
+                <div>${message}</div>
+                <button onclick="this.parentElement.remove()">×</button>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.remove();
+                }
+            }, 3000);
+        }
+        
+        // Копирование ссылки на доску
+        function copyBoardLink() {
+            const url = `${window.location.origin}${window.location.pathname}?id=${boardId}`;
+            navigator.clipboard.writeText(url).then(() => {
+                showNotification('Ссылка на доску скопирована в буфер обмена!', 'success');
+            }).catch(err => {
+                showNotification('Не удалось скопировать ссылку', 'error');
+                console.error('Ошибка копирования:', err);
+            });
+        }
+        
+        // Копирование ID доски
+        function copyBoardId() {
+            navigator.clipboard.writeText(boardId).then(() => {
+                showNotification('ID доски скопирован в буфер обмена!', 'success');
+            }).catch(err => {
+                showNotification('Не удалось скопировать ID', 'error');
+                console.error('Ошибка копирования:', err);
+            });
+        }
+        
+        // Переключение режимов
+// Инициализация буфера рисования
+
+
+// Создаем буфер только для режима рисования
+function initDrawingBuffer() {
+    if (currentMode === 'draw') {
+        if (!drawingBuffer) {
+            drawingBuffer = new DrawingBuffer(socket, boardId);
+        }
+    } else {
+        // Уничтожаем буфер при переключении на другой режим
+        if (drawingBuffer) {
+            drawingBuffer.destroy();
+            drawingBuffer = null;
+        }
+    }
+}
+
+// Обновите функцию setMode:
+function setMode(mode) {
+    currentMode = mode;
+    
+    drawModeBtn.classList.toggle('active', mode === 'draw');
+    shapeModeBtn.classList.toggle('active', mode === 'shape');
+    formulaModeBtn.classList.toggle('active', mode === 'formula');
+    textModeBtn.classList.toggle('active', mode === 'text');
+    imageModeBtn.classList.toggle('active', mode === 'image');
+    
+    drawingPanel.style.display = mode === 'draw' ? 'block' : 'none';
+    shapesPanel.style.display = mode === 'shape' ? 'block' : 'none';
+    formulasPanel.style.display = mode === 'formula' ? 'block' : 'none';
+    textPanel.style.display = mode === 'text' ? 'block' : 'none';
+    imagePanel.style.display = mode === 'image' ? 'block' : 'none';
+    
+    // Инициализируем или уничтожаем буфер рисования
+    initDrawingBuffer();
+if (currentMode !== mode) {
+        isDrawing = false;
+        isDrawingShape = false;
+        isDraggingShape = false;
+        isDraggingImage = false;
+        isDraggingElement = false;
+        
+        // Скрываем превью для фигур
+        if (previewCanvas) {
+            previewCanvas.style.display = 'none';
+            previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+        }
+    }
+    if (mode === 'draw') {
+        canvas.style.cursor = 'crosshair';
+        ctx.globalCompositeOperation = 'source-over';
+    } else if (mode === 'shape') {
+        canvas.style.cursor = currentShape ? 'crosshair' : 'default';
+        shapeInfo.textContent = currentShape 
+            ? `Выбрано: ${getShapeName(currentShape)}` 
+            : 'Выберите фигуру и рисуйте на холсте';
+        ctx.globalCompositeOperation = 'source-over';
+    } else if (mode === 'image') {
+        canvas.style.cursor = 'move';
+    } else {
+        canvas.style.cursor = 'default';
+    }
+}
+        
+        // Получение имени фигуры
+        function getShapeName(shape) {
+            const shapeNames = {
+                'line': 'Прямая',
+                'circle': 'Круг',
+                'square': 'Квадрат',
+                'rectangle': 'Прямоугольник',
+                'triangle': 'Треугольник',
+                'equilateral': 'Равносторонний треугольник',
+                'right': 'Прямоугольный треугольник',
+                'isosceles': 'Равнобедренный треугольник',
+                'obtuse': 'Тупоугольный треугольник',
+                'diamond': 'Ромб',
+                'arrow': 'Стрелка',
+                'cube': 'Куб',
+                'parallelepiped': 'Параллелепипед',
+                'pyramid': 'Пирамида'
+            };
+            return shapeNames[shape] || 'Фигура';
+        }
+        
+        // Выбор фигуры
+        shapeButtons.forEach(btn => {
+            btn.addEventListener('click', () => {
+                shapeButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentShape = btn.dataset.shape;
+                shapeInfo.textContent = `Выбрано: ${getShapeName(currentShape)}`;
+                setMode('shape');
+            });
+        });
+        
+        // Переключатели режимов
+        drawModeBtn.addEventListener('click', () => setMode('draw'));
+        shapeModeBtn.addEventListener('click', () => setMode('shape'));
+        formulaModeBtn.addEventListener('click', () => setMode('formula'));
+        textModeBtn.addEventListener('click', () => setMode('text'));
+        imageModeBtn.addEventListener('click', () => setMode('image'));
+        
+        // Обновление предпросмотра формулы
+        function updateFormulaPreview() {
+            const latex = latexInput.value.trim();
+            if (latex) {
+                try {
+                    formulaPreview.innerHTML = `<div class="latex-output">\\(${latex}\\)</div>`;
+                    if (MathJax.typesetPromise) {
+                        MathJax.typesetPromise([formulaPreview]).catch(err => {
+                            formulaPreview.innerHTML = `<div style="color: #f44336;">${latex}</div>`;
+                        });
+                    }
+                } catch (err) {
+                    formulaPreview.innerHTML = `<div style="color: #f44336;">${latex}</div>`;
+                }
+            } else {
+                formulaPreview.innerHTML = '<div class="latex-output">Введите формулу для предпросмотра</div>';
+            }
+        }
+        
+        // Вставка примера формулы
+        window.insertExample = function(example) {
+            latexInput.value = example;
+            updateFormulaPreview();
+            setMode('formula');
+        };
+        
+        // Вставка примера текста
+        window.insertTextExample = function(example) {
+            textInput.value = example;
+            setMode('text');
+        };
+        
+        // Функция для получения правильных координат мыши на canvas
+        function getCanvasCoordinates(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            
+            let clientX, clientY;
+            
+            if (e.type.includes('touch')) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+            
+            const x = (clientX - rect.left) * scaleX;
+            const y = (clientY - rect.top) * scaleY;
+            
+            return { x, y };
+        }
+        
+        // Проверка попадания на изображение
+        function hitImage(x, y) {
+            return images.find(img =>
+                x >= img.x &&
+                x <= img.x + img.width &&
+                y >= img.y &&
+                y <= img.y + img.height
+            );
+        }
+        
+        // Проверка попадания на фигуру
+        function hitShape(x, y) {
+            for (let i = shapes.length - 1; i >= 0; i--) {
+                const shape = shapes[i];
+                // Простая проверка попадания в прямоугольную область фигуры
+                const minX = Math.min(shape.x1, shape.x2);
+                const maxX = Math.max(shape.x1, shape.x2);
+                const minY = Math.min(shape.y1, shape.y2);
+                const maxY = Math.max(shape.y1, shape.y2);
+                
+                // Расширяем область для лучшего захвата
+                const padding = 10;
+                
+                if (x >= minX - padding && x <= maxX + padding && 
+                    y >= minY - padding && y <= maxY + padding) {
+                    return shape;
+                }
+            }
+            return null;
+        }
+        
+        // Функции для рисования фигур
+        function drawLine(x1, y1, x2, y2, context, color, lineWidth, isSelected = false) {
+            context.beginPath();
+            context.moveTo(x1, y1);
+            context.lineTo(x2, y2);
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+            
+            if (isSelected) {
+                // Рисуем маркеры для выделения
+                context.fillStyle = '#2196F3';
+                drawMarker(context, x1, y1);
+                drawMarker(context, x2, y2);
+                drawMarker(context, (x1 + x2) / 2, (y1 + y2) / 2);
+            }
+        }
+        
+        function drawCircle(x1, y1, x2, y2, context, color, lineWidth, isSelected = false) {
+            const centerX = (x1 + x2) / 2;
+            const centerY = (y1 + y2) / 2;
+            const radius = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2)) / 2;
+            
+            context.beginPath();
+            context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+            
+            if (isSelected) {
+                context.fillStyle = '#2196F3';
+                drawMarker(context, centerX - radius, centerY - radius);
+                drawMarker(context, centerX + radius, centerY - radius);
+                drawMarker(context, centerX - radius, centerY + radius);
+                drawMarker(context, centerX + radius, centerY + radius);
+                drawMarker(context, centerX, centerY);
+            }
+        }
+        
+        function drawSquare(x1, y1, x2, y2, context, color, lineWidth, isSelected = false) {
+            const size = Math.min(Math.abs(x2 - x1), Math.abs(y2 - y1));
+            const x = x1 + (x2 > x1 ? 0 : -size);
+            const y = y1 + (y2 > y1 ? 0 : -size);
+            
+            context.beginPath();
+            context.rect(x, y, size, size);
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+            
+            if (isSelected) {
+                context.fillStyle = '#2196F3';
+                drawMarker(context, x, y);
+                drawMarker(context, x + size, y);
+                drawMarker(context, x, y + size);
+                drawMarker(context, x + size, y + size);
+                drawMarker(context, x + size/2, y + size/2);
+            }
+        }
+        
+        function drawRectangle(x1, y1, x2, y2, context, color, lineWidth, isSelected = false) {
+            const width = x2 - x1;
+            const height = y2 - y1;
+            
+            context.beginPath();
+            context.rect(x1, y1, width, height);
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+            
+            if (isSelected) {
+                context.fillStyle = '#2196F3';
+                drawMarker(context, x1, y1);
+                drawMarker(context, x2, y1);
+                drawMarker(context, x1, y2);
+                drawMarker(context, x2, y2);
+                drawMarker(context, x1 + width/2, y1 + height/2);
+            }
+        }
+        
+        function drawTriangle(x1, y1, x2, y2, context, color, lineWidth, isSelected = false) {
+            context.beginPath();
+            context.moveTo(x1, y1);
+            context.lineTo(x2, y2);
+            context.lineTo(x1 + (x2 - x1) / 2, y1 - (y2 - y1) / 2);
+            context.closePath();
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+            
+            if (isSelected) {
+                context.fillStyle = '#2196F3';
+                drawMarker(context, x1, y1);
+                drawMarker(context, x2, y2);
+                drawMarker(context, x1 + (x2 - x1) / 2, y1 - (y2 - y1) / 2);
+            }
+        }
+        function drawTriangle(x1, y1, x2, y2, context, color, lineWidth) {
+            context.beginPath();
+            context.moveTo(x1, y1);
+            context.lineTo(x2, y2);
+            context.lineTo(x1 + (x2 - x1) / 2, y1 - (y2 - y1) / 2);
+            context.closePath();
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+        }
+        
+        function drawEquilateralTriangle(x1, y1, x2, y2, context, color, lineWidth) {
+            const side = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+            const height = side * Math.sqrt(3) / 2;
+            
+            const x3 = x1 + (x2 - x1) / 2;
+            const y3 = y1 - height;
+            
+            context.beginPath();
+            context.moveTo(x1, y1);
+            context.lineTo(x2, y2);
+            context.lineTo(x3, y3);
+            context.closePath();
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+        }
+        
+        function drawRightTriangle(x1, y1, x2, y2, context, color, lineWidth) {
+            context.beginPath();
+            context.moveTo(x1, y1);
+            context.lineTo(x2, y1);
+            context.lineTo(x1, y2);
+            context.closePath();
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+        }
+        
+        function drawIsoscelesTriangle(x1, y1, x2, y2, context, color, lineWidth) {
+            const base = Math.abs(x2 - x1);
+            const height = Math.abs(y2 - y1);
+            
+            const x3 = (x1 + x2) / 2;
+            const y3 = y1 - height;
+            
+            context.beginPath();
+            context.moveTo(x1, y1);
+            context.lineTo(x2, y1);
+            context.lineTo(x3, y3);
+            context.closePath();
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+        }
+        
+        function drawObtuseTriangle(x1, y1, x2, y2, context, color, lineWidth) {
+            const x3 = x1 + (x2 - x1) * 0.3;
+            const y3 = y1 - (y2 - y1) * 0.7;
+            
+            context.beginPath();
+            context.moveTo(x1, y1);
+            context.lineTo(x2, y2);
+            context.lineTo(x3, y3);
+            context.closePath();
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+        }
+        
+        function drawDiamond(x1, y1, x2, y2, context, color, lineWidth) {
+            const centerX = (x1 + x2) / 2;
+            const centerY = (y1 + y2) / 2;
+            const width = Math.abs(x2 - x1) / 2;
+            const height = Math.abs(y2 - y1) / 2;
+            
+            context.beginPath();
+            context.moveTo(centerX, y1);
+            context.lineTo(x2, centerY);
+            context.lineTo(centerX, y2);
+            context.lineTo(x1, centerY);
+            context.closePath();
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+        }
+        
+        function drawArrow(x1, y1, x2, y2, context, color, lineWidth) {
+            const angle = Math.atan2(y2 - y1, x2 - x1);
+            const headLength = Math.max(lineWidth * 3, 15);
+            
+            context.beginPath();
+            context.moveTo(x1, y1);
+            context.lineTo(x2, y2);
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+            
+            context.beginPath();
+            context.moveTo(x2, y2);
+            context.lineTo(
+                x2 - headLength * Math.cos(angle - Math.PI / 6),
+                y2 - headLength * Math.sin(angle - Math.PI / 6)
+            );
+            context.moveTo(x2, y2);
+            context.lineTo(
+                x2 - headLength * Math.cos(angle + Math.PI / 6),
+                y2 - headLength * Math.sin(angle + Math.PI / 6)
+            );
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+        }
+        
+        function drawCube(x1, y1, x2, y2, ctx, color, lineWidth) {
+            const width = Math.abs(x2 - x1);
+            const height = width;
+            const depth = Math.min(width, height) / 3;
+            if (y1<0) y2 = y2 = y1 - width; else y2 = y1 + width
+            
+            ctx.beginPath();
+            // Основание
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y1);
+            ctx.lineTo(x2, y2);
+            ctx.lineTo(x1, y2);
+            ctx.closePath();
+            
+            // Верхняя грань
+            ctx.moveTo(x1 + depth, y1 - depth);
+            ctx.lineTo(x2 + depth, y1 - depth);
+            ctx.lineTo(x2 + depth, y2 - depth);
+            ctx.lineTo(x1 + depth, y2 - depth);
+            ctx.closePath();
+            
+            // Соединяющие линии
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x1 + depth, y1 - depth);
+            
+            ctx.moveTo(x2, y1);
+            ctx.lineTo(x2 + depth, y1 - depth);
+            
+            ctx.moveTo(x2, y2);
+            ctx.lineTo(x2 + depth, y2 - depth);
+            
+            ctx.moveTo(x1, y2);
+            ctx.lineTo(x1 + depth, y2 - depth);
+            
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lineWidth;
+            ctx.stroke();
+        }
+        
+        function drawParallelepiped(x1, y1, x2, y2, ctx, color, lineWidth) {
+            const width = Math.abs(x2 - x1);
+            const height = Math.abs(y2 - y1);
+            const depth = Math.min(width, height) / 4;
+            
+            ctx.beginPath();
+            // Основание
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y1);
+            ctx.lineTo(x2, y2);
+            ctx.lineTo(x1, y2);
+            ctx.closePath();
+            
+            // Верхняя грань
+            ctx.moveTo(x1 + depth, y1 - depth);
+            ctx.lineTo(x2 + depth, y1 - depth);
+            ctx.lineTo(x2 + depth, y2 - depth);
+            ctx.lineTo(x1 + depth, y2 - depth);
+            ctx.closePath();
+            
+            // Соединяющие линии
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x1 + depth, y1 - depth);
+            
+            ctx.moveTo(x2, y1);
+            ctx.lineTo(x2 + depth, y1 - depth);
+            
+            ctx.moveTo(x2, y2);
+            ctx.lineTo(x2 + depth, y2 - depth);
+            
+            ctx.moveTo(x1, y2);
+            ctx.lineTo(x1 + depth, y2 - depth);
+            
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lineWidth;
+            ctx.stroke();
+        }
+        
+        function drawPyramid(x1, y1, x2, y2, context, color, lineWidth) {
+            const width = Math.abs(x2 - x1);
+            const centerX = (x1 + x2) / 2;
+            const topY = y1 - width / 2;
+            
+            context.beginPath();
+            context.rect(x1, y1, width, width);
+            
+            context.moveTo(x1, y1);
+            context.lineTo(centerX, topY);
+            context.lineTo(x1 + width, y1);
+            
+            context.moveTo(x1 + width, y1);
+            context.lineTo(centerX, topY);
+            context.lineTo(x1 + width, y1 + width);
+            
+            context.moveTo(x1 + width, y1 + width);
+            context.lineTo(centerX, topY);
+            context.lineTo(x1, y1 + width);
+            
+            context.moveTo(x1, y1 + width);
+            context.lineTo(centerX, topY);
+            context.lineTo(x1, y1);
+            
+            context.strokeStyle = color;
+            context.lineWidth = lineWidth;
+            context.stroke();
+        }        
+        
+        function drawMarker(context, x, y) {
+            context.beginPath();
+            context.arc(x, y, 5, 0, Math.PI * 2);
+            context.fill();
+        }
+        
+        // Функция предпросмотра фигуры
+        function previewShape(startX, startY, currentX, currentY) {
+            if (!currentShape) return;
+            
+            previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+            previewCanvas.style.display = 'block';
+            
+            const shapeFunctions = {
+                'line': drawLine,
+                'circle': drawCircle,
+                'square': drawSquare,
+                'rectangle': drawRectangle,
+                'triangle': drawTriangle,
+                'equilateral': drawEquilateralTriangle,
+                'right': drawRightTriangle,
+                'isosceles': drawIsoscelesTriangle,
+                'obtuse': drawObtuseTriangle,
+                'diamond': drawDiamond,
+                'arrow': drawArrow,
+                'cube': drawCube,
+                'parallelepiped': drawParallelepiped,
+                'pyramid': drawPyramid
+            };
+            
+            if (shapeFunctions[currentShape]) {
+                shapeFunctions[currentShape](
+                    startX, startY, currentX, currentY,
+                    previewCtx, currentColor, currentBrushSize, false
+                );
+            }
+        }
+        
+        // Функция рисования фигуры на основном холсте
+        function drawShapeOnCanvas(shapeData, isSelected = false) {
+            const { shape, x1, y1, x2, y2, color, brushSize } = shapeData;
+            
+            ctx.globalCompositeOperation = 'source-over';
+            
+            const shapeFunctions = {
+                'line': drawLine,
+                'circle': drawCircle,
+                'square': drawSquare,
+                'rectangle': drawRectangle,
+                'triangle': drawTriangle,
+                'equilateral': drawEquilateralTriangle,
+                'right': drawRightTriangle,
+                'isosceles': drawIsoscelesTriangle,
+                'obtuse': drawObtuseTriangle,
+                'diamond': drawDiamond,
+                'arrow': drawArrow,
+                'cube': drawCube,
+                'parallelepiped': drawParallelepiped,
+                'pyramid': drawPyramid
+            };
+            
+            if (shapeFunctions[shape]) {
+                shapeFunctions[shape](
+                    x1, y1, x2, y2,
+                    ctx, color || currentColor, brushSize || currentBrushSize, isSelected
+                );
+            }
+        }
+        
+        // Функция для перерисовки всех элементов
+        function redrawAll() {
+            // Очищаем canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.globalCompositeOperation = 'source-over';
+            
+            // Перерисовываем все рисунки
+            drawings.forEach(drawData => {
+                drawOnCanvas(drawData);
+            });
+            
+            // Перерисовываем все фигуры
+            shapes.forEach(shapeData => {
+                const isSelected = (selectedShape && selectedShape.id === shapeData.id);
+                drawShapeOnCanvas(shapeData, isSelected);
+            });
+            
+            // Рисуем все изображения
+            images.forEach(imgObj => {
+                if (imgObj.img.complete) {
+                    ctx.drawImage(imgObj.img, imgObj.x, imgObj.y, imgObj.width, imgObj.height);
+                    
+                    // Рисуем рамку вокруг выбранного изображения
+                    if (selectedImage && selectedImage.id === imgObj.id && currentMode === 'image') {
+                        ctx.strokeStyle = '#2196F3';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(imgObj.x - 2, imgObj.y - 2, imgObj.width + 4, imgObj.height + 4);
+                    }
+                }
+            });
+        }
+        
+        // Функция создания и добавления изображения
+        function createAndAddImage(imageSrc, imageData = {}) {
+            const img = new Image();
+            img.onload = function() {
+                const imgObj = {
+                    img: img,
+                    x: imageData.x || 100,
+                    y: imageData.y || 100,
+                    width: imageData.width || img.width * 0.5,
+                    height: imageData.height || img.height * 0.5,
+                    id: imageData.id || 'img_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9),
+                    src: imageSrc
+                };
+                
+                images.push(imgObj);
+                redrawAll();
+                
+                // Отправляем на сервер только если это локальное изображение (не полученное от сервера)
+                if (!imageData.fromServer) {
+                    compressAndSendImage(img, imgObj);
+                }
+            };
+            
+            img.onerror = function() {
+                console.error('Ошибка загрузки изображения');
+                showNotification('Ошибка загрузки изображения', 'error');
+            };
+            
+            img.src = imageSrc;
+        }
+        
+        // Функция сжатия и отправки изображения
+        function compressAndSendImage(img, imgObj) {
+            const maxWidth = 800;
+            const maxHeight = 600;
+            let width = img.width;
+            let height = img.height;
+            
+            // Масштабируем если изображение слишком большое
+            if (width > maxWidth || height > maxHeight) {
+                const ratio = Math.min(maxWidth / width, maxHeight / height);
+                width *= ratio;
+                height *= ratio;
+            }
+            
+            // Создаем временный canvas для сжатия
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = width;
+            tempCanvas.height = height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(img, 0, 0, width, height);
+            
+            // Конвертируем в data URL с качеством 0.7
+            const compressedDataUrl = tempCanvas.toDataURL('image/jpeg', 0.7);
+            
+            // Отправляем на сервер
+            socket.emit('add_image', {
+                src: compressedDataUrl,
+                x: imgObj.x,
+                y: imgObj.y,
+                width: imgObj.width,
+                height: imgObj.height,
+                id: imgObj.id
+            });
+        }
+        
+        // Функция рисования на холсте
+        function drawOnCanvas(data) {
+            const { x, y, lastX, lastY, color, brushSize, type } = data;
+            
+            ctx.beginPath();
+            ctx.lineWidth = brushSize;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            
+            if (type === 'eraser') {
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.strokeStyle = 'rgba(0,0,0,1)';
+            } else {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = color || currentColor;
+            }
+            
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.closePath();
+        }
+        
+        // Функция очистки холста
+// Функция очистки холста
+function clearCanvas() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+    ctx.globalCompositeOperation = 'source-over';
+    images = [];
+    shapes = [];
+    selectedShape = null;
+    
+    // Очищаем буфер рисования
+    if (drawingBuffer) {
+        drawingBuffer.localBuffer = [];
+    }
+    drawings = [];
+}
+        
+        // Создание элемента формулы
+        function createFormulaElement(formulaData) {
+            const container = document.createElement('div');
+            container.className = 'formula-container';
+            container.id = formulaData.id;
+            container.style.left = `${formulaData.x}px`;
+            container.style.top = `${formulaData.y}px`;
+            container.style.borderColor = formulaData.user_color || '#2196F3';
+            container.style.color = '#000000';
+            
+            const content = document.createElement('div');
+            content.className = 'latex-output';
+            content.style.color = '#000000';
+            content.style.fontSize = '1.5em';
+            content.style.textAlign = 'center';
+            content.style.padding = '10px';
+            
+            content.textContent = formulaData.latex;
+            container.appendChild(content);
+            
+            // Рендерим LaTeX
+            renderLatex(formulaData.latex, content);
+            
+            // Кнопки действий
+            const actions = document.createElement('div');
+            actions.className = 'formula-actions';
+            
+            const editBtn = document.createElement('button');
+            editBtn.className = 'formula-btn edit';
+            editBtn.innerHTML = '<i class="fas fa-edit"></i>';
+            editBtn.onclick = (e) => {
+                e.stopPropagation();
+                editFormula(formulaData.id, formulaData.latex);
+            };
+            
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'formula-btn';
+            deleteBtn.innerHTML = '<i class="fas fa-times"></i>';
+            
+            deleteBtn.onclick = (e) => {
+                e.stopPropagation();
+                deleteFormula(formulaData.id);
+            };
+            
+            actions.appendChild(editBtn);
+            actions.appendChild(deleteBtn);
+            container.appendChild(actions);
+            
+            // События перетаскивания
+            container.addEventListener('mousedown', startDragElement);
+            container.addEventListener('touchstart', startDragElement);
+            
+            container.addEventListener('click', (e) => {
+                e.stopPropagation();
+                selectElement(container);
+            });
+            
+            return container;
+        }
+        
+        // Создание элемента текста
+        function createTextElement(textData) {
+            const container = document.createElement('div');
+            container.className = 'text-container';
+            container.id = textData.id;
+            container.style.left = `${textData.x}px`;
+            container.style.top = `${textData.y}px`;
+            container.style.borderColor = textData.user_color || '#2196F3';
+            container.style.color = textData.color || '#000000';
+            container.style.fontSize = textData.fontSize || '16px';
+            container.style.fontFamily = textData.fontFamily || 'Arial, sans-serif';
+            
+            const content = document.createElement('div');
+            content.className = 'text-content';
+            content.style.color = textData.color || '#000000';
+            content.style.fontSize = textData.fontSize || '16px';
+            content.style.fontFamily = textData.fontFamily || 'Arial, sans-serif';
+            content.style.lineHeight = '1.5';
+            content.style.padding = '10px';
+            content.style.whiteSpace = 'pre-wrap';
+            content.style.wordBreak = 'break-word';
+            
+            content.innerHTML = textData.text.replace(/\n/g, '<br>');
+            container.appendChild(content);
+            
+            // Кнопки действий
+            const actions = document.createElement('div');
+            actions.className = 'text-actions';
+            
+            const editBtn = document.createElement('button');
+            editBtn.className = 'text-btn edit';
+            editBtn.innerHTML = '<i class="fas fa-edit"></i>';
+            editBtn.onclick = (e) => {
+                e.stopPropagation();
+                editText(textData.id, textData.text, textData.fontSize, textData.fontFamily);
+            };
+            
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'text-btn';
+            deleteBtn.innerHTML = '<i class="fas fa-times"></i>';
+            deleteBtn.onclick = (e) => {
+                e.stopPropagation();
+                deleteText(textData.id);
+            };
+            
+            actions.appendChild(editBtn);
+            actions.appendChild(deleteBtn);
+            container.appendChild(actions);
+            
+            // События перетаскивания
+            container.addEventListener('mousedown', startDragElement);
+            container.addEventListener('touchstart', startDragElement);
+            
+            container.addEventListener('click', (e) => {
+                e.stopPropagation();
+                selectElement(container);
+            });
+            
+            return container;
+        }
+        
+        // Рендеринг LaTeX
+        function renderLatex(latexString, container) {
+            try {
+                container.innerHTML = `\\(${latexString}\\)`;
+                if (window.MathJax && MathJax.typesetPromise) {
+                    MathJax.typesetPromise([container]);
+                }
+            } catch (err) {
+                container.innerHTML = `<div>${latexString}</div>`;
+            }
+        }
+        
+        // Выбор элемента (формулы или текста)
+        function selectElement(element) {
+            document.querySelectorAll('.formula-container, .text-container').forEach(el => {
+                el.classList.remove('active');
+            });
+            element.classList.add('active');
+            selectedElement = element;
+        }
+        
+        // Начало перетаскивания элемента
+        function startDragElement(e) {
+            e.preventDefault();
+            const element = e.target.closest('.formula-container, .text-container');
+            if (!element) return;
+            
+            selectElement(element);
+            isDraggingElement = true;
+            
+            const rect = element.getBoundingClientRect();
+            const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+            const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+            
+            dragOffsetX = clientX - rect.left;
+            dragOffsetY = clientY - rect.top;
+            
+            document.addEventListener('mousemove', dragElement);
+            document.addEventListener('touchmove', dragElement);
+            document.addEventListener('mouseup', stopDragElement);
+            document.addEventListener('touchend', stopDragElement);
+        }
+        
+        // Перетаскивание элемента
+        function dragElement(e) {
+            if (!isDraggingElement || !selectedElement) return;
+            
+            e.preventDefault();
+            const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+            const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+            
+            const containerRect = canvas.getBoundingClientRect();
+            const x = clientX - containerRect.left - dragOffsetX;
+            const y = clientY - containerRect.top - dragOffsetY;
+            
+            const maxX = canvas.width - selectedElement.offsetWidth;
+            const maxY = canvas.height - selectedElement.offsetHeight;
+            
+            selectedElement.style.left = `${Math.max(0, Math.min(x, maxX))}px`;
+            selectedElement.style.top = `${Math.max(0, Math.min(y, maxY))}px`;
+        }
+        
+        // Окончание перетаскивания
+        function stopDragElement() {
+            if (!isDraggingElement || !selectedElement) return;
+            
+            isDraggingElement = false;
+            
+            if (selectedElement.classList.contains('formula-container')) {
+                const formulaData = {
+                    id: selectedElement.id,
+                    x: parseInt(selectedElement.style.left),
+                    y: parseInt(selectedElement.style.top),
+                    latex: formulas.find(f => f.id === selectedElement.id)?.latex || ''
+                };
+                socket.emit('update_formula', formulaData);
+            } else if (selectedElement.classList.contains('text-container')) {
+                const textData = {
+                    id: selectedElement.id,
+                    x: parseInt(selectedElement.style.left),
+                    y: parseInt(selectedElement.style.top),
+                    text: texts.find(t => t.id === selectedElement.id)?.text || ''
+                };
+                socket.emit('update_text', textData);
+            }
+            
+            document.removeEventListener('mousemove', dragElement);
+            document.removeEventListener('touchmove', dragElement);
+            document.removeEventListener('mouseup', stopDragElement);
+            document.removeEventListener('touchend', stopDragElement);
+        }
+        
+        function deleteFormula(formulaId) {
+            const formulaElement = document.getElementById(formulaId);
+
+            if (!formulaElement) return;
+
+            // Удаляем DOM-элемент
+            formulaElement.remove();
+
+            // Удаляем из массива
+            formulas = formulas.filter(f => f.id !== formulaId);
+
+            // Сообщаем серверу
+            socket.emit('delete_formula', { id: formulaId });
+
+            showNotification('Формула удалена', 'success');
+        }
+        
+        function deleteText(textId) {
+            const textElement = document.getElementById(textId);
+
+            if (!textElement) return;
+
+            // Удаляем DOM-элемент
+            textElement.remove();
+
+            // Удаляем из массива
+            texts = texts.filter(t => t.id !== textId);
+
+            // Сообщаем серверу
+            socket.emit('delete_text', { id: textId });
+
+            showNotification('Текст удален', 'success');
+        }
+        
+        // Редактирование формулы
+        function editFormula(formulaId, currentLatex) {
+            latexInput.value = currentLatex;
+            updateFormulaPreview();
+            setMode('formula');
+            
+            addFormulaBtn.innerHTML = '<i class="fas fa-save"></i> Сохранить изменения';
+            addFormulaBtn.onclick = function() {
+                const newLatex = latexInput.value.trim();
+                if (newLatex) {
+                    const formulaElement = document.getElementById(formulaId);
+                    if (formulaElement) {
+                        const content = formulaElement.querySelector('.latex-output');
+                        renderLatex(newLatex, content);
+                        
+                        const formulaData = {
+                            id: formulaId,
+                            x: parseInt(formulaElement.style.left),
+                            y: parseInt(formulaElement.style.top),
+                            latex: newLatex
+                        };
+                        socket.emit('update_formula', formulaData);
+                        
+                        // Обновляем в массиве
+                        const index = formulas.findIndex(f => f.id === formulaId);
+                        if (index !== -1) {
+                            formulas[index].latex = newLatex;
+                        }
+                    }
+                }
+                resetFormulaUI();
+            };
+        }
+        
+        // Редактирование текста
+        function editText(textId, currentText, currentSize, currentFont) {
+            textInput.value = currentText;
+            textSizeSelect.value = currentSize || '16px';
+            textFontSelect.value = currentFont || 'Arial, sans-serif';
+            setMode('text');
+            
+            addTextBtn.innerHTML = '<i class="fas fa-save"></i> Сохранить изменения';
+            addTextBtn.onclick = function() {
+                const newText = textInput.value.trim();
+                if (newText) {
+                    const textElement = document.getElementById(textId);
+                    if (textElement) {
+                        const content = textElement.querySelector('.text-content');
+                        content.innerHTML = newText.replace(/\n/g, '<br>');
+                        content.style.fontSize = textSizeSelect.value;
+                        content.style.fontFamily = textFontSelect.value;
+                        
+                        const textData = {
+                            id: textId,
+                            x: parseInt(textElement.style.left),
+                            y: parseInt(textElement.style.top),
+                            text: newText,
+                            fontSize: textSizeSelect.value,
+                            fontFamily: textFontSelect.value,
+                            color: content.style.color || '#000000'
+                        };
+                        socket.emit('update_text', textData);
+                        
+                        // Обновляем в массиве
+                        const index = texts.findIndex(t => t.id === textId);
+                        if (index !== -1) {
+                            texts[index] = { ...texts[index], ...textData };
+                        }
+                    }
+                }
+                resetTextUI();
+            };
+        }
+        
+        // Сброс UI формулы
+        function resetFormulaUI() {
+            latexInput.value = '';
+            addFormulaBtn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить формулу';
+            addFormulaBtn.onclick = addFormulaHandler;
+            updateFormulaPreview();
+        }
+        
+        // Сброс UI текста
+        function resetTextUI() {
+            textInput.value = '';
+            addTextBtn.innerHTML = '<i class="fas fa-plus-circle"></i> Добавить текст';
+            addTextBtn.onclick = addTextHandler;
+        }
+        
+        // Обработчик добавления формулы
+        function addFormulaHandler() {
+            const latex = latexInput.value.trim();
+            if (!latex) {
+                showNotification('Введите формулу LaTeX', 'error');
+                return;
+            }
+            
+            const formulaData = {
+                latex: latex,
+                x: canvas.width / 2 - 100,
+                y: canvas.height / 2 - 50
+            };
+            
+            socket.emit('add_formula', formulaData);
+            resetFormulaUI();
+        }
+        
+        // Обработчик добавления текста
+        function addTextHandler() {
+            const text = textInput.value.trim();
+            if (!text) {
+                showNotification('Введите текст', 'error');
+                return;
+            }
+            
+            const textData = {
+                text: text,
+                x: canvas.width / 2 - 100,
+                y: canvas.height / 2 - 50,
+                fontSize: textSizeSelect.value,
+                fontFamily: textFontSelect.value,
+                color: currentColor
+            };
+            
+            socket.emit('add_text', textData);
+            resetTextUI();
+        }
+        
+        // Обработчики событий мыши
+        canvas.addEventListener('mousedown', (e) => {
+            const coords = getCanvasCoordinates(e);
+            
+            // Для режима "Фигуры" - проверяем попадание на существующую фигуру
+            if (currentMode === 'shape') {
+                const shape = hitShape(coords.x, coords.y);
+                if (shape) {
+                    selectedShape = shape;
+                    isDraggingShape = true;
+                    shapeDragOffsetX = coords.x;
+                    shapeDragOffsetY = coords.y;
+                    redrawAll(); // Перерисовываем с выделением
+                    return;
+                } else if (currentShape) {
+                    // Если фигура не выбрана, но есть активная фигура для рисования
+                    isDrawingShape = true;
+                    shapeStartX = coords.x;
+                    shapeStartY = coords.y;
+                    return;
+                } else {
+                    selectedShape = null;
+                    redrawAll();
+                }
+            }
+            
+            // Для режима "Картинка"
+            if (currentMode === 'image') {
+                const img = hitImage(coords.x, coords.y);
+                if (img) {
+                    selectedImage = img;
+                    isDraggingImage = true;
+                    imageDragOffsetX = coords.x - img.x;
+                    imageDragOffsetY = coords.y - img.y;
+                    redrawAll();
+                    return;
+                } else {
+                    selectedImage = null;
+                    redrawAll();
+                }
+            }
+            
+            if (isDraggingElement) return;
+            
+            isDrawing = true;
+            lastX = coords.x;
+            lastY = coords.y;
+        });
+        
+canvas.addEventListener('mousemove', (e) => {
+    const coords = getCanvasCoordinates(e);
+    
+    // Для режима "Фигуры" - перетаскивание выбранной фигуры
+    if (currentMode === 'shape' && isDraggingShape && selectedShape) {
+        e.preventDefault();
+        
+        const deltaX = coords.x - shapeDragOffsetX;
+        const deltaY = coords.y - shapeDragOffsetY;
+        
+        // Обновляем координаты фигуры
+        selectedShape.x1 += deltaX;
+        selectedShape.y1 += deltaY;
+        selectedShape.x2 += deltaX;
+        selectedShape.y2 += deltaY;
+        
+        shapeDragOffsetX = coords.x;
+        shapeDragOffsetY = coords.y;
+        
+        redrawAll();
+        
+        // Отправляем обновление на сервер
+        socket.emit('update_shape', {
+            id: selectedShape.id,
+            x1: selectedShape.x1,
+            y1: selectedShape.y1,
+            x2: selectedShape.x2,
+            y2: selectedShape.y2,
+            shape: selectedShape.shape,
+            color: selectedShape.color,
+            brushSize: selectedShape.brushSize
+        });
+        return;
+    }
+    
+    // Для режима "Фигуры" - предпросмотр новой фигуры
+    if (currentMode === 'shape' && isDrawingShape && currentShape) {
+        previewShape(shapeStartX, shapeStartY, coords.x, coords.y);
+        return;
+    }
+    
+    // Для режима "Картинка"
+    if (currentMode === 'image' && isDraggingImage && selectedImage) {
+        e.preventDefault();
+        
+        const newX = coords.x - imageDragOffsetX;
+        const newY = coords.y - imageDragOffsetY;
+        
+        // Ограничиваем движение в пределах canvas
+        selectedImage.x = Math.max(0, Math.min(newX, canvas.width - selectedImage.width));
+        selectedImage.y = Math.max(0, Math.min(newY, canvas.height - selectedImage.height));
+        
+        redrawAll();
+        
+        // Отправляем обновление позиции на сервер
+        socket.emit('update_image', {
+            id: selectedImage.id,
+            x: selectedImage.x,
+            y: selectedImage.y,
+            width: selectedImage.width,
+            height: selectedImage.height
+        });
+        return;
+    }
+    
+    if (isDraggingElement || !isDrawing) return;
+    
+    const x = coords.x;
+    const y = coords.y;
+    const type = e.button === 2 || e.which === 3 ? 'eraser' : 'draw';
+    
+    // Используем буфер ТОЛЬКО для режима рисования
+    if (currentMode === 'draw' && drawingBuffer) {
+        const drawingData = {
+            x, y, lastX, lastY,
+            color: type === 'eraser' ? '#ffffff' : currentColor,
+            brushSize: currentBrushSize,
+            type
+        };
+        
+        // Добавляем в буфер
+        drawingBuffer.addDrawing(drawingData);
+    } else if (currentMode === 'draw') {
+        // Старый способ для режима рисования
+        drawOnCanvas({
+            x, y, lastX, lastY, 
+            color: type === 'eraser' ? '#ffffff' : currentColor,
+            brushSize: currentBrushSize,
+            type
+        });
+        
+        // Сохраняем в локальную историю
+        drawings.push({
+            x, y, lastX, lastY,
+            color: currentColor,
+            brushSize: currentBrushSize,
+            type
+        });
+        
+        socket.emit('drawing', {
+            x, y, lastX, lastY,
+            color: currentColor,
+            brushSize: currentBrushSize,
+            type
+        });
+    }
+    
+    lastX = x;
+    lastY = y;
+});
+        
+canvas.addEventListener('mouseup', (e) => {
+    const coords = getCanvasCoordinates(e);
+    
+    // Для режима "Фигуры"
+    if (currentMode === 'shape') {
+        if (isDraggingShape) {
+            isDraggingShape = false;
+            return;
+        }
+        
+        if (isDrawingShape) {
+            isDrawingShape = false;
+            previewCanvas.style.display = 'none';
+            previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+            
+            const shapeId = 'shape_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            const shapeData = {
+                id: shapeId,
+                shape: currentShape,
+                x1: shapeStartX,
+                y1: shapeStartY,
+                x2: coords.x,
+                y2: coords.y,
+                color: currentColor,
+                brushSize: currentBrushSize
+            };
+            
+            shapes.push(shapeData);
+            redrawAll();
+            
+            socket.emit('shape_drawn', shapeData);
+            return;
+        }
+    }
+    
+    // Для режима "Картинка"
+    if (currentMode === 'image' && isDraggingImage) {
+        isDraggingImage = false;
+        return;
+    }
+    
+    isDrawing = false;
+});
+        
+        canvas.addEventListener('mouseout', () => {
+            isDrawing = false;
+            if (isDrawingShape) {
+                isDrawingShape = false;
+                previewCanvas.style.display = 'none';
+                previewCtx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+            }
+            if (isDraggingShape) {
+                isDraggingShape = false;
+            }
+            if (isDraggingImage) {
+                isDraggingImage = false;
+            }
+        });
+        
+        // Обработчик колесика мыши для масштабирования изображений и фигур
+        canvas.addEventListener('wheel', (e) => {
+            if (currentMode === 'image' && selectedImage) {
+                e.preventDefault();
+                
+                const coords = getCanvasCoordinates(e);
+                const scaleFactor = e.deltaY < 0 ? 1.1 : 0.9;
+                
+                // Вычисляем новую ширину и высоту
+                const newWidth = selectedImage.width * scaleFactor;
+                const newHeight = selectedImage.height * scaleFactor;
+                
+                // Минимальный и максимальный размер
+                if (newWidth < 20 || newHeight < 20 || newWidth > 2000 || newHeight > 2000) return;
+                
+                // Вычисляем смещение для сохранения позиции относительно курсора
+                const cursorX = coords.x;
+                const cursorY = coords.y;
+                const offsetX = cursorX - selectedImage.x;
+                const offsetY = cursorY - selectedImage.y;
+                
+                // Обновляем размер и позицию
+                selectedImage.width = newWidth;
+                selectedImage.height = newHeight;
+                selectedImage.x = cursorX - offsetX * scaleFactor;
+                selectedImage.y = cursorY - offsetY * scaleFactor;
+                
+                redrawAll();
+                
+                // Отправляем обновление на сервер
+                socket.emit('update_image', {
+                    id: selectedImage.id,
+                    x: selectedImage.x,
+                    y: selectedImage.y,
+                    width: selectedImage.width,
+                    height: selectedImage.height
+                });
+            } else if (currentMode === 'shape' && selectedShape) {
+                e.preventDefault();
+                
+                const scaleFactor = e.deltaY < 0 ? 1.05 : 0.95;
+                
+                // Вычисляем центр фигуры
+                const centerX = (selectedShape.x1 + selectedShape.x2) / 2;
+                const centerY = (selectedShape.y1 + selectedShape.y2) / 2;
+                
+                // Масштабируем координаты относительно центра
+                selectedShape.x1 = centerX + (selectedShape.x1 - centerX) * scaleFactor;
+                selectedShape.y1 = centerY + (selectedShape.y1 - centerY) * scaleFactor;
+                selectedShape.x2 = centerX + (selectedShape.x2 - centerX) * scaleFactor;
+                selectedShape.y2 = centerY + (selectedShape.y2 - centerY) * scaleFactor;
+                
+                redrawAll();
+                
+                // Отправляем обновление на сервер
+                socket.emit('update_shape', {
+                    id: selectedShape.id,
+                    x1: selectedShape.x1,
+                    y1: selectedShape.y1,
+                    x2: selectedShape.x2,
+                    y2: selectedShape.y2,
+                    shape: selectedShape.shape,
+                    color: selectedShape.color,
+                    brushSize: selectedShape.brushSize
+                });
+            }
+        }, { passive: false });
+        
+        // Отключаем контекстное меню на правый клик
+        canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+        
+        // Выбор цвета
+        colorOptions.forEach(option => {
+            option.addEventListener('click', () => {
+                colorOptions.forEach(opt => opt.classList.remove('active'));
+                option.classList.add('active');
+                currentColor = option.dataset.color;
+            });
+        });
+        
+        // Выбор размера кисти
+        brushSizes.forEach(size => {
+            size.addEventListener('click', () => {
+                brushSizes.forEach(s => s.classList.remove('active'));
+                size.classList.add('active');
+                currentBrushSize = parseInt(size.dataset.size);
+            });
+        });
+        
+        // Обновление предпросмотра формулы при вводе
+        latexInput.addEventListener('input', updateFormulaPreview);
+        
+        // Обработчик загрузки изображения
+        imageUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Проверяем размер файла (макс 5MB)
+            if (file.size > 5 * 1024 * 1024) {
+                showNotification('Размер файла не должен превышать 5MB', 'error');
+                imageUpload.value = '';
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = () => {
+                uploadedImageData = reader.result;
+                showNotification("Изображение загружено. Нажмите 'Добавить изображение'", "success");
+            };
+            reader.onerror = () => {
+                showNotification('Ошибка чтения файла', 'error');
+            };
+            reader.readAsDataURL(file);
+        });
+        
+        // Обработчик добавления изображения
+        addImageBtn.addEventListener('click', () => {
+            if (!uploadedImageData) {
+                showNotification("Сначала загрузите изображение", "error");
+                return;
+            }
+
+            createAndAddImage(uploadedImageData, {
+                x: canvas.width / 2 - 100,
+                y: canvas.height / 2 - 100,
+                fromServer: false
+            });
+            
+            uploadedImageData = null;
+            imageUpload.value = "";
+            showNotification("Изображение добавлено на доску", "success");
+        });
+        
+        // Обработчики кнопок формул и текста
+        addFormulaBtn.onclick = addFormulaHandler;
+        
+        clearFormulaBtn.addEventListener('click', () => {
+            latexInput.value = '';
+            updateFormulaPreview();
+        });
+        
+        addTextBtn.onclick = addTextHandler;
+        
+        clearTextBtn.addEventListener('click', () => {
+            textInput.value = '';
+        });
+        
+        // Обработчики управления
+        clearBtn.addEventListener('click', () => {
+            if (confirm('Очистить доску для всех пользователей?')) {
+                clearCanvas();
+                formulaOverlay.innerHTML = '';
+                textOverlay.innerHTML = '';
+                formulas = [];
+                texts = [];
+                drawings = [];
+                socket.emit('clear_canvas');
+                showNotification('Доска очищена', 'info');
+            }
+        });
+        
+        // Кнопка "Отменить"
+        undoBtn.addEventListener('click', () => {
+            if (drawings.length > 0) {
+                drawings.pop();
+                socket.emit('undo_last', { type: 'drawing' });
+                redrawAll();
+            } else if (shapes.length > 0) {
+                shapes.pop();
+                socket.emit('undo_last', { type: 'shape' });
+                redrawAll();
+            } else if (images.length > 0 && currentMode === 'image' && selectedImage) {
+                const index = images.findIndex(img => img.id === selectedImage.id);
+                if (index !== -1) {
+                    socket.emit('remove_image', { id: selectedImage.id });
+                    images.splice(index, 1);
+                    selectedImage = null;
+                    redrawAll();
+                }
+            } else if (shapes.length > 0 && currentMode === 'shape' && selectedShape) {
+                const index = shapes.findIndex(shape => shape.id === selectedShape.id);
+                if (index !== -1) {
+                    socket.emit('remove_shape', { id: selectedShape.id });
+                    shapes.splice(index, 1);
+                    selectedShape = null;
+                    redrawAll();
+                }
+            } else if (formulas.length > 0) {
+                const lastFormula = formulas[formulas.length - 1];
+                deleteFormula(lastFormula.id);
+            } else if (texts.length > 0) {
+                const lastText = texts[texts.length - 1];
+                deleteText(lastText.id);
+            } else {
+                showNotification('Нет действий для отмены', 'info');
+            }
+        });
+        
+        // Кнопка сохранения
+        saveBtn.addEventListener('click', async () => {
+            try {
+                showNotification('Сохранение изображения...', 'info');
+
+                const board = document.querySelector('#canvas-container');
+                
+                if (!board) {
+                    console.error('canvas-container не найден!');
+                    return;
+                }
+
+                const resultCanvas = await html2canvas(board, {
+                    backgroundColor: '#ffffff',
+                    scale: 2,
+                    useCORS: true
+                });
+
+                const link = document.createElement('a');
+                link.download = `рисунок_доска_${boardId}_${new Date().toISOString().slice(0, 10)}.png`;
+                link.href = resultCanvas.toDataURL('image/png');
+                link.click();
+
+                showNotification('Изображение сохранено', 'success');
+
+            } catch (error) {
+                console.error('Ошибка сохранения:', error);
+                showNotification('Ошибка при сохранении изображения', 'error');
+            }
+        });
+        
+        // Копирование ссылки и ID
+        copyLinkBtn.addEventListener('click', copyBoardLink);
+        boardIdDisplay.addEventListener('click', copyBoardId);
+        newBoardBtn.addEventListener('click', () => {
+            window.location.href = '/';
+        });
+
+// ====== НАЧАЛО: Обработчики событий кэширования ======
+
+// Обработка пакетного рисования от других пользователей
+socket.on('batch_drawing', (data) => {
+    console.log('Получен пакет рисунков:', data.drawings.length);
+    
+    // Отрисовываем все рисунки из пакета
+    data.drawings.forEach(drawing => {
+        // Не отрисовываем собственные рисунки (они уже отрисованы локально)
+        if (drawing.user_sid !== socket.id) {
+            drawOnCanvas(drawing);
+            // Сохраняем в историю для перерисовки
+            if (!drawings.some(d => d.id === drawing.id)) {
+                drawings.push(drawing);
+            }
+            
+            // Обновляем время получения
+            if (drawingBuffer && drawing.server_timestamp) {
+                drawingBuffer.lastServerTime = Math.max(
+                    drawingBuffer.lastServerTime, 
+                    drawing.server_timestamp
+                );
+            }
+        }
+    });
+});
+
+// Ответ на пинг
+socket.on('pong_drawing', (data) => {
+    if (drawingBuffer) {
+        drawingBuffer.latency = data.latency || 0;
+        drawingBuffer.adjustBatchSize();
+    }
+});
+
+// Получение пропущенных рисунков
+socket.on('missing_drawings', (data) => {
+    if (drawingBuffer) {
+        drawingBuffer.processMissingDrawings(data.drawings);
+    }
+});
+
+// Синхронизация времени
+socket.on('sync_info', (data) => {
+    if (drawingBuffer) {
+        drawingBuffer.lastServerTime = data.latest_timestamp || Date.now() / 1000;
+    }
+});
+
+// ====== КОНЕЦ: Обработчики событий кэширования ======        
+        
+        // События WebSocket
+        socket.on('connect', () => {
+            console.log('Подключено к серверу, доска ID:', boardId);
+            connectionStatus.className = 'status connected';
+            connectionStatus.innerHTML = '<i class="fas fa-wifi"></i> Подключено к серверу';
+            showNotification('Подключено к доске', 'success');
+        });
+        
+        socket.on('disconnect', () => {
+            console.log('Отключено от сервера');
+            connectionStatus.className = 'status disconnected';
+            connectionStatus.innerHTML = '<i class="fas fa-exclamation-triangle"></i> Отключено от сервера';
+            showNotification('Отключено от сервера', 'error');
+        });
+        
+        socket.on('error', (data) => {
+            console.error('Ошибка сервера:', data.message);
+            showNotification(`Ошибка: ${data.message}`, 'error');
+            
+            if (data.message.includes('Доска не найдена')) {
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 2000);
+            }
+        });
+        
+        // Получение истории
+        socket.on('drawing_history', (history) => {
+            console.log('Получена история рисунков:', history.length);
+            drawings = history;
+            redrawAll();
+        });
+        
+        socket.on('shape_history', (history) => {
+            console.log('Получена история фигур:', history.length);
+            shapes = history;
+            redrawAll();
+        });
+        
+        socket.on('formula_history', (history) => {
+            console.log('Получена история формул:', history.length);
+            formulas = history;
+            history.forEach(formulaData => {
+                const formulaElement = createFormulaElement(formulaData);
+                formulaOverlay.appendChild(formulaElement);
+            });
+        });
+        
+        socket.on('text_history', (history) => {
+            console.log('Получена история текстов:', history.length);
+            texts = history;
+            history.forEach(textData => {
+                const textElement = createTextElement(textData);
+                textOverlay.appendChild(textElement);
+            });
+        });
+        
+        // Обработка фигур
+        socket.on('shape_drawn', (data) => {
+            console.log('Получена новая фигура:', data.id);
+            shapes.push(data);
+            redrawAll();
+        });
+        
+        socket.on('update_shape', (data) => {
+            console.log('Обновлена фигура:', data.id);
+            const shape = shapes.find(s => s.id === data.id);
+            if (shape) {
+                shape.x1 = data.x1;
+                shape.y1 = data.y1;
+                shape.x2 = data.x2;
+                shape.y2 = data.y2;
+                redrawAll();
+            }
+        });
+        
+        socket.on('remove_shape', (data) => {
+            console.log('Удалена фигура:', data.id);
+            const index = shapes.findIndex(s => s.id === data.id);
+            if (index !== -1) {
+                if (selectedShape && selectedShape.id === data.id) {
+                    selectedShape = null;
+                }
+                shapes.splice(index, 1);
+                redrawAll();
+            }
+        });
+        
+        // Обработка изображений
+        socket.on('image_history', (history) => {
+            console.log('Получена история изображений:', history.length);
+            history.forEach(imageData => {
+                createAndAddImage(imageData.src, {
+                    ...imageData,
+                    fromServer: true
+                });
+            });
+        });
+        
+        socket.on('add_image', (data) => {
+            console.log('Получено новое изображение от другого пользователя:', data.id);
+            createAndAddImage(data.src, {
+                ...data,
+                fromServer: true
+            });
+        });
+        
+        socket.on('update_image', (data) => {
+            console.log('Обновлено изображение:', data.id);
+            const img = images.find(img => img.id === data.id);
+            if (img) {
+                img.x = data.x;
+                img.y = data.y;
+                img.width = data.width;
+                img.height = data.height;
+                redrawAll();
+            }
+        });
+        
+        socket.on('remove_image', (data) => {
+            console.log('Удалено изображение:', data.id);
+            const index = images.findIndex(img => img.id === data.id);
+            if (index !== -1) {
+                if (selectedImage && selectedImage.id === data.id) {
+                    selectedImage = null;
+                }
+                images.splice(index, 1);
+                redrawAll();
+            }
+        });
+        
+        // Обработка формул
+        socket.on('add_formula', (data) => {
+            formulas.push(data);
+            const formulaElement = createFormulaElement(data);
+            formulaOverlay.appendChild(formulaElement);
+        });
+        
+        socket.on('update_formula', (data) => {
+            const index = formulas.findIndex(f => f.id === data.id);
+            if (index !== -1) {
+                formulas[index] = data;
+                const formulaElement = document.getElementById(data.id);
+                if (formulaElement) {
+                    formulaElement.style.left = `${data.x}px`;
+                    formulaElement.style.top = `${data.y}px`;
+                    const content = formulaElement.querySelector('.latex-output');
+                    renderLatex(data.latex, content);
+                }
+            }
+        });
+        
+        socket.on('delete_formula', (data) => {
+            formulas = formulas.filter(f => f.id !== data.id);
+            const formulaElement = document.getElementById(data.id);
+            if (formulaElement) {
+                formulaElement.remove();
+            }
+        });
+        
+        // Обработка текста
+        socket.on('add_text', (data) => {
+            texts.push(data);
+            const textElement = createTextElement(data);
+            textOverlay.appendChild(textElement);
+        });
+        
+        socket.on('update_text', (data) => {
+            const index = texts.findIndex(t => t.id === data.id);
+            if (index !== -1) {
+                texts[index] = data;
+                const textElement = document.getElementById(data.id);
+                if (textElement) {
+                    textElement.style.left = `${data.x}px`;
+                    textElement.style.top = `${data.y}px`;
+                    const content = textElement.querySelector('.text-content');
+                    content.innerHTML = data.text.replace(/\n/g, '<br>');
+                    if (data.fontSize) {
+                        content.style.fontSize = data.fontSize;
+                        textElement.style.fontSize = data.fontSize;
+                    }
+                    if (data.fontFamily) {
+                        content.style.fontFamily = data.fontFamily;
+                        textElement.style.fontFamily = data.fontFamily;
+                    }
+                }
+            }
+        });
+        
+        socket.on('delete_text', (data) => {
+            texts = texts.filter(t => t.id !== data.id);
+            const textElement = document.getElementById(data.id);
+            if (textElement) {
+                textElement.remove();
+            }
+        });
+        
+        // Рисование
+        socket.on('drawing', (data) => {
+            drawings.push(data);
+            drawOnCanvas(data);
+        });
+ // Получение истории
+socket.on('drawing_history', (history) => {
+    console.log('Получена история рисунков:', history.length);
+    drawings = history.slice(-100); // Берем только последние 100 для быстрой загрузки
+    redrawAll();
+    
+    // Запрашиваем остальные если нужно
+    if (history.length > 100 && drawingBuffer) {
+        const lastTimestamp = history[history.length - 101]?.timestamp || 0;
+        drawingBuffer.lastServerTime = lastTimestamp;
+        drawingBuffer.requestMissingData();
+    }
+});       
+        // Очистка
+// Обработчик очистки доски
+socket.on('clear_canvas', () => {
+    clearCanvas();
+    formulaOverlay.innerHTML = '';
+    textOverlay.innerHTML = '';
+    formulas = [];
+    texts = [];
+    drawings = [];
+    images = [];
+    shapes = [];
+    selectedShape = null;
+    selectedImage = null;
+    
+    // Очищаем буфер рисования
+    if (drawingBuffer) {
+        drawingBuffer.localBuffer = [];
+    }
+    
+    showNotification('Доска очищена', 'info');
+});
+        
+        socket.on('undo_last', (data) => {
+            showNotification('Действие отменено', 'info');
+            redrawAll();
+        });
+        
+        // Обновление списка пользователей
+        socket.on('users_update', (data) => {
+            usersList.innerHTML = '';
+            data.users.forEach((user, index) => {
+                const userItem = document.createElement('div');
+                userItem.className = 'user-item';
+                userItem.innerHTML = `
+                    <div class="user-color" style="background: ${user.color};"></div>
+                    <span>${user.username}</span>
+                `;
+                usersList.appendChild(userItem);
+            });
+            
+            usersCount.textContent = data.count;
+            liveUsersCount.textContent = data.count;
+        });
+        
+        // Обработка нажатия клавиш
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'z') {
+                e.preventDefault();
+                undoBtn.click();
+            }
+            
+            if (e.key === 'Delete') {
+                if (currentMode === 'image' && selectedImage) {
+                    if (confirm('Удалить выбранное изображение?')) {
+                        const index = images.findIndex(img => img.id === selectedImage.id);
+                        if (index !== -1) {
+                            socket.emit('remove_image', { id: selectedImage.id });
+                            images.splice(index, 1);
+                            selectedImage = null;
+                            redrawAll();
+                            showNotification('Изображение удалено', 'success');
+                        }
+                    }
+                    e.preventDefault();
+                } else if (currentMode === 'shape' && selectedShape) {
+                    if (confirm('Удалить выбранную фигуру?')) {
+                        const index = shapes.findIndex(shape => shape.id === selectedShape.id);
+                        if (index !== -1) {
+                            socket.emit('remove_shape', { id: selectedShape.id });
+                            shapes.splice(index, 1);
+                            selectedShape = null;
+                            redrawAll();
+                            showNotification('Фигура удалена', 'success');
+                        }
+                    }
+                    e.preventDefault();
+                } else if (selectedElement) {
+                    if (confirm('Удалить выбранный элемент?')) {
+                        if (selectedElement.classList.contains('formula-container')) {
+                            deleteFormula(selectedElement.id);
+                        } else if (selectedElement.classList.contains('text-container')) {
+                            deleteText(selectedElement.id);
+                        }
+                        selectedElement = null;
+                    }
+                }
+            }
+            
+            if (e.key === 'Escape') {
+                selectedImage = null;
+                selectedShape = null;
+                if (selectedElement) {
+                    selectedElement.classList.remove('active');
+                    selectedElement = null;
+                }
+                redrawAll();
+            }
+            
+            if (e.key === 'Enter' && (document.activeElement === latexInput || document.activeElement === textInput)) {
+                e.preventDefault();
+                if (document.activeElement === latexInput) {
+                    addFormulaHandler();
+                } else {
+                    addTextHandler();
+                }
+            }
+        });
+        
+        // Клик по холсту для снятия выделения
+        canvas.addEventListener('click', () => {
+            if (selectedElement && !isDraggingElement) {
+                selectedElement.classList.remove('active');
+                selectedElement = null;
+            }
+        });
+        
+        // Инициализация MathJax
+        document.addEventListener('DOMContentLoaded', function() {
+            if (window.MathJax) {
+                MathJax.startup.promise.then(() => {
+                    console.log('MathJax загружен и готов к работе');
+                    updateFormulaPreview();
+                });
+            }
+        });
+    </script>
+</body>
+</html>
