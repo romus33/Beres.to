@@ -7,21 +7,96 @@ import json
 import time
 import random
 import string
+import logging, psutil
+from hashlib import md5 
+from datetime import datetime
+from config import SECRET_KEY, USERS
+logname = './/log//log_'+datetime.today().strftime('%Y-%m-%d')+'.log'
 
+# Enable logfactory for logs
+def _record_factory(*args, **kwargs):
+    record = old_factory(*args, **kwargs)
+    try:
+        hashstring_= str(request.headers.get('X-Forwarded-For')) + str(request.headers.get("User-Agent"))
+        hsh = md5(hashstring_.encode('utf-8'))
+        record.req_id = str(hsh.hexdigest())
+    except Exception:
+        record.req_id = '___Starting Flask___'
+    try:
+        record.agent = request.headers.get('User-Agent')
+    except Exception:
+        record.agent = "NO_AGENT"
+    r_a = 'NO IP'
+    try:
+        remote_ip = request.headers.get('X-Forwarded-For')
+        if remote_ip:
+            r_a = remote_ip
+        else:
+            r_a = str(request.remote_addr)
+    except Exception:
+        r_a = 'NO IP'
+    record.custom_ip = r_a
+
+    # add system stats to every LogRecord (collected at logging time)
+    try:
+        # cpu_percent with interval=0 gives last computed value quickly
+        record.cpu = psutil.cpu_percent(interval=0)
+        record.mem = psutil.virtual_memory().percent
+    except Exception:
+        record.cpu = 'N/A'
+        record.mem = 'N/A'
+
+    return record
+
+# adjust format to include cpu/mem (keeps existing fields)
+logging.basicConfig(
+    filename=logname,
+    filemode='a',
+    format="%(asctime)s, ip: %(custom_ip)s, user ID: %(req_id)s, agent: %(agent)s, CPU: %(cpu)s; MEM: %(mem)s. %(message)s ",
+    datefmt='%Y.%b.%d, %H:%M:%S',
+    level=logging.INFO
+)
+old_factory = logging.getLogRecordFactory()
+logging.setLogRecordFactory(_record_factory)
+
+# ---------------------- lightweight logging helpers ----------------------
+def get_sys_stats():
+    try:
+        return psutil.cpu_percent(interval=0), psutil.virtual_memory().percent
+    except Exception:
+        return None, None
+
+def log(message, level='warning', exc_info=False):
+    """
+    Wrapper to log with session IDs. Use instead of inlining CPU/MEM psutil calls.
+    """
+    cpu, mem = get_sys_stats()
+    prefix = f"CPU: {cpu}; MEM: {mem}. "
+    # message may already contain details; keep it
+    msg = prefix + str(message)
+    if level == 'warning':
+        logging.warning(msg, exc_info=exc_info)
+    elif level == 'info':
+        logging.info(msg, exc_info=exc_info)
+    elif level == 'error':
+        logging.error(msg, exc_info=exc_info)
+    else:
+        logging.debug(msg, exc_info=exc_info)
+
+def log_exception(context_msg, exc):
+    cpu, mem = get_sys_stats()
+    logging.error(f"CPU: {cpu}; MEM: {mem}. {context_msg}: {exc}", exc_info=True)
 
 Payload.max_decode_packets = 2000  
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'secret_key_для_доски_рисования'  # поменяй на свой секрет в проде
+app.config['SECRET_KEY'] = SECRET_KEY # поменяй на свой секрет в проде
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Простейшее in-memory хранилище пользователей (для примера)
-USERS = {
-    "admin": "1234",
-    "test": "test"
-}
+
 
 # Глобальные словари для хранения досок и их данных
-boards = {}       # {board_id: {drawing_history: [], formula_history: [], shape_history: [], text_history: []}}
+boards = {}       # {board_id: {drawing_history: [], formula_history: [], shape_history: [], text_history: [], image_history: [], graph_history: []}}
 board_users = {}  # {board_id: {user_sid: {username, color, board_id}}}
 
 def generate_board_id():
@@ -37,6 +112,17 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated
 
+def optimize_graph_history(board_id, max_graphs=50):
+    """Оптимизация истории графиков для уменьшения трафика"""
+    if board_id not in boards:
+        return
+    
+    history = boards[board_id]['graph_history']
+    if len(history) > max_graphs:
+        # Оставляем только последние N графиков
+        boards[board_id]['graph_history'] = history[-max_graphs:]
+        app.logger.info(f'Оптимизирована история графиков доски {board_id}: {len(history)} -> {max_graphs}')
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     """Страница входа"""
@@ -45,12 +131,14 @@ def login():
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         if username in USERS and USERS[username] == password:
+            log(f'Successful login {username}')
             session["logged_in"] = True
             session["username"] = username
             # перенаправление на next если передано
             next_url = request.args.get("next") or url_for("index")
             return redirect(next_url)
         else:
+            log(f'WARN! Incorrect login {username} with password {password}')
             error = "Неверный логин или пароль"
     return render_template("login.html", error=error)
 
@@ -79,7 +167,8 @@ def index():
                     'formula_history': [],
                     'shape_history': [],
                     'text_history': [],
-                    'image_history': []  # ← ДОБАВЬТЕ ЭТУ СТРОКУ
+                    'image_history': [],
+                    'graph_history': []
 }
                 board_users[board_id] = {}
                 return render_template('index.html', board_id=board_id)
@@ -110,8 +199,11 @@ def create_board():
         'drawing_history': [],
         'formula_history': [],
         'shape_history': [],
-        'text_history': []
+        'text_history': [],
+        'image_history': [],
+        'graph_history': []        
     }
+    log(f'Board with id: {new_board_id} is created')
     board_users[new_board_id] = {}
     return redirect(url_for('index', id=new_board_id))
 
@@ -119,9 +211,11 @@ def create_board():
 def join_board(board_id):
     """Присоединение к существующей доске — доступно всем, если доска существует"""
     if board_id in boards:
+        log(f'Successful connection to the board with id: {board_id}')
         return render_template('index.html', board_id=board_id)
     else:
         # если не существует — только авторизованные могут создавать (через /create)
+        log(f'WARN! Connection to the invalid board with id: {board_id}')
         return (
             "Доска не найдена. Если вы хотите создать доску — войдите в систему. "
             f"<a href='{url_for('login', next=url_for('create_board'))}'>Войти</a>"
@@ -147,7 +241,7 @@ def handle_add_image(data):
 
         # Добавляем информацию о пользователе
         data['user_color'] = board_users[board_id][user_sid]['color']
-        data['username'] = board_users[board_id][user_sid]['username']
+        username_ = data['username'] = board_users[board_id][user_sid]['username']
 
         # Сохраняем изображение в историю доски
         board_data = boards[board_id]
@@ -157,14 +251,15 @@ def handle_add_image(data):
             image_history.pop(0)
 
         data['timestamp'] = time.time()
-        data['id'] = data.get('id', f"image_{len(image_history)}")
+        id_ = data['id'] = data.get('id', f"image_{len(image_history)}")
         image_history.append(data)
-
+        log(f'Create image with {id_}, {username_}')
         # Рассылаем всем пользователям в этой доске, кроме отправителя
         emit('add_image', data, room=board_id, include_self=False)
 
     except Exception as e:
-        app.logger.exception(f'Ошибка обработки изображения: {e}')
+        log_exception(f'Error of image processing', e)
+        #app.logger.exception(f'Ошибка обработки изображения: {e}')
 
 @socketio.on('update_image')
 def handle_update_image(data):
@@ -192,12 +287,16 @@ def handle_update_image(data):
 def handle_remove_image(data):
     """Удаление изображения"""
     image_id = data.get('id')
+    log(f'Remove image: {image_id}')
+
     if image_id:
         # Находим доску с этим изображением
         for board_id, board_data in boards.items():
             board_data['image_history'] = [img for img in board_data['image_history'] 
                                          if img.get('id') != image_id]
+            
             emit('remove_image', data, room=board_id)
+            
             return
 
 @socketio.on('connect')
@@ -222,7 +321,8 @@ def handle_connect():
                 'formula_history': [],
                 'shape_history': [],
                 'text_history': [],
-                'image_history': []
+                'image_history': [],
+                'graph_history': []
             }
             board_users[board_id] = {}
         else:
@@ -252,7 +352,7 @@ def handle_connect():
         'board_id': board_id
     }
 
-    app.logger.info(f'Пользователь подключился: {user_sid} ({username}) к доске {board_id}')
+    log(f'User has been connected: {user_sid} ({username}) к доске {board_id}')
 
     # Отправляем историю доски новому пользователю
     board_data = boards[board_id]
@@ -266,6 +366,7 @@ def handle_connect():
     emit('shape_history', board_data['shape_history'])
     emit('text_history', board_data['text_history'])
     emit('image_history', board_data['image_history'])
+    emit('graph_history', board_data['graph_history'])
     
     # Отправляем метку времени для синхронизации
     emit('sync_info', {
@@ -299,7 +400,7 @@ def handle_disconnect():
         if user_sid in users:
             username = users[user_sid]['username']
             del users[user_sid]
-            app.logger.info(f'Пользователь отключился: {user_sid} ({username}) от доски {board_id}')
+            log(f'User has been disconnected: {user_sid} (username: {username}) from board {board_id}')
 
             # Не удаляем доску автоматически — сохраняем историю
             # Если нужно удалять пустые доски, можно раскомментировать:
@@ -365,12 +466,12 @@ def handle_drawing(data):
         # Добавляем серверную метку времени
         data['server_timestamp'] = time.time()
         data['client_timestamp'] = client_timestamp
-        data['username'] = board_users[board_id][user_sid]['username']
-        data['user_sid'] = user_sid  # Для отслеживания источника
+        username_ = data['username'] = board_users[board_id][user_sid]['username']
+        sid_ = data['user_sid'] = user_sid  # Для отслеживания источника
 
         # ID для отслеживания пакета
         drawing_id = data.get('id', f"draw_{int(time.time() * 1000)}_{random.randint(1000, 9999)}")
-        data['id'] = drawing_id
+        id_ = data['id'] = drawing_id
 
         # Сохраняем рисунок в историю доски
         board_data = boards[board_id]
@@ -381,7 +482,7 @@ def handle_drawing(data):
             drawing_history.pop(0)
 
         drawing_history.append(data)
-
+        log(f'Drawing: user: {username_}, id: {id_}, sid: {sid_}')
         # Отправляем с подтверждением получения
         emit('drawing', data, room=board_id, include_self=False, 
              callback=lambda: app.logger.debug(f"Drawing {drawing_id} confirmed"))
@@ -390,7 +491,7 @@ def handle_drawing(data):
         return {'status': 'ok', 'id': drawing_id, 'server_timestamp': data['server_timestamp']}
 
     except Exception as e:
-        app.logger.exception(f'Ошибка обработки рисунка: {e}')
+        log_exception(f'Error in drawing processing: ', e)
         return {'status': 'error', 'message': str(e)}, 500
 
 @socketio.on('batch_drawing')
@@ -430,7 +531,7 @@ def handle_batch_drawing(data):
             if len(board_data['drawing_history']) > 2000:
                 board_data['drawing_history'].pop(0)
             board_data['drawing_history'].append(drawing_data)
-
+        log(f'Batch drawing by user_sid: {user_sid}')
         # Отправляем все рисунки одним пакетом
         emit('batch_drawing', {
             'drawings': drawings,
@@ -441,8 +542,9 @@ def handle_batch_drawing(data):
         return {'status': 'ok', 'ids': confirmed_ids, 'count': len(drawings)}
 
     except Exception as e:
-        app.logger.exception(f'Ошибка обработки пакетного рисования: {e}')
+        log_exception(f'Error in batch drawing', e)
         return {'status': 'error', 'message': str(e)}, 500
+    
 @socketio.on('request_missing_drawings')
 def handle_request_missing(data):
     """Запрос пропущенных рисунков (для восстановления после обрыва)"""
@@ -471,7 +573,7 @@ def handle_request_missing(data):
                     recent_drawings.append(drawing)
                 if len(recent_drawings) >= max_count:
                     break
-
+        log(f'Request missing drawings {len(recent_drawings)}')
         return {
             'status': 'ok',
             'drawings': recent_drawings,
@@ -480,13 +582,14 @@ def handle_request_missing(data):
         }
 
     except Exception as e:
-        app.logger.exception(f'Ошибка запроса пропущенных рисунков: {e}')
+        log_exception(f'Error in the request of missing drawings: ', e)
         return {'status': 'error', 'message': str(e)}, 500    
 
 @socketio.on('ping_drawing')
 def handle_ping(data):
     """Пинг для поддержания соединения и проверки лага"""
     client_time = data.get('client_time', time.time())
+    log(f"Ping drawings with latency {time.time() - client_time}")
     return {
         'status': 'pong',
         'client_time': client_time,
@@ -513,7 +616,7 @@ def handle_shape_drawn(data):
             return
 
         # Добавляем информацию о пользователе
-        data['user_sid'] = user_sid
+        sid_ = data['user_sid'] = user_sid
         data['timestamp'] = time.time()
         
         # Убедимся, что есть ID
@@ -525,6 +628,9 @@ def handle_shape_drawn(data):
             data['brushSize'] = 5
         if 'color' not in data:
             data['color'] = '#000000'
+        # Добавляем вращение по умолчанию, если нет
+        if 'rotation' not in data:
+            data['rotation'] = 0
 
         # Сохраняем фигуру в историю доски
         board_data = boards[board_id]
@@ -534,12 +640,13 @@ def handle_shape_drawn(data):
             shape_history.pop(0)
 
         shape_history.append(data)
-
+        
+        log(f'Draw the shape: sid_: {sid_}')
         # Рассылаем всем пользователям в этой доске, кроме отправителя
         emit('shape_drawn', data, room=board_id, include_self=False)
 
     except Exception as e:
-        app.logger.exception(f'Ошибка обработки фигуры: {e}')
+        log_exception(f'Error in add of shape: ', e)
 
 @socketio.on('add_formula')
 def handle_add_formula(data):
@@ -558,8 +665,8 @@ def handle_add_formula(data):
             return
 
         # Добавляем информацию о пользователе
-        data['user_color'] = board_users[board_id][user_sid]['color']
-        data['username'] = board_users[board_id][user_sid]['username']
+        color_ = data['user_color'] = board_users[board_id][user_sid]['color']
+        username_ = data['username'] = board_users[board_id][user_sid]['username']
 
         # Сохраняем формулу в историю доски
         board_data = boards[board_id]
@@ -571,12 +678,136 @@ def handle_add_formula(data):
         data['timestamp'] = time.time()
         data['id'] = f"formula_{len(formula_history)}"
         formula_history.append(data)
-
+        log(f'Add formula: username: {username_}, color: {color_}')
         # Рассылаем всем пользователям в этой доске
         emit('add_formula', data, room=board_id)
 
     except Exception as e:
-        app.logger.exception(f'Ошибка обработки формулы: {e}')
+        log_exception(f'Error in the handle of add formula: ', e)
+
+@socketio.on('add_graph')
+def handle_add_graph(data):
+    """Обработка добавления графика"""
+    try:
+        user_sid = request.sid
+
+        # Находим доску пользователя
+        board_id = None
+        for bid, users in board_users.items():
+            if user_sid in users:
+                board_id = bid
+                break
+
+        if not board_id:
+            return
+
+        # Добавляем информацию о пользователе
+        data['user_color'] = board_users[board_id][user_sid]['color']
+        username_ = data['username'] = board_users[board_id][user_sid]['username']
+        sid_ = data['user_sid'] = user_sid
+        data['timestamp'] = time.time()
+
+        # Генерируем ID если нет
+        if 'id' not in data:
+            data['id'] = f"graph_{int(time.time() * 1000)}_{random.randint(1000, 9999)}"
+
+        # Сохраняем график в историю доски
+        board_data = boards[board_id]
+        graph_history = board_data['graph_history']
+
+        if len(graph_history) > 100:  # Ограничение количества графиков
+            graph_history.pop(0)
+
+        # Убедимся, что у графика есть все необходимые поля
+        if 'rotation' not in data:
+            data['rotation'] = 0
+        if 'color' not in data:
+            data['color'] = '#ff0000'
+        if 'lineWidth' not in data:
+            data['lineWidth'] = 2
+
+        graph_history.append(data)
+        log(f'Add graph: username: {username_}, sid: {sid_}')
+        # Рассылаем всем пользователям в этой доске, кроме отправителя
+        emit('add_graph', data, room=board_id, include_self=False)
+
+    except Exception as e:
+        log_exception(f'Error in graph handle: ', e)
+        return {'status': 'error', 'message': str(e)}, 500
+
+@socketio.on('update_graph')
+def handle_update_graph(data):
+    """Обновление позиции/размера графика"""
+    try:
+        graph_id = data.get('id')
+        log(f'Update graph position')
+        if not graph_id:
+            return
+
+        # Находим доску с этим графиком
+        for board_id, board_data in boards.items():
+            for i, graph in enumerate(board_data['graph_history']):
+                if graph.get('id') == graph_id:
+                    # Обновляем только позицию и размер
+                    board_data['graph_history'][i].update({
+                        'x': data.get('x', graph.get('x', 0)),
+                        'y': data.get('y', graph.get('y', 0)),
+                        'width': data.get('width', graph.get('width', 600)),
+                        'height': data.get('height', graph.get('height', 400)),
+                        'timestamp': time.time()
+                    })
+                    
+                    # Рассылаем обновление всем, кроме отправителя
+                    updated_graph = board_data['graph_history'][i]
+                    socketio.emit('update_graph', updated_graph, 
+                                room=board_id, include_self=False)
+                    return
+
+    except Exception as e:
+        log_exception(f'Error in update graph position: ', e)
+
+@socketio.on('remove_graph')
+def handle_remove_graph(data):
+    """Удаление графика"""
+    try:
+        
+        graph_id = data.get('id')
+        log('f"Remove graph: {graph_id}')
+        if graph_id:
+            # Находим доску с этим графиком
+            for board_id, board_data in boards.items():
+                # Фильтруем графики, удаляя указанный
+                original_count = len(board_data['graph_history'])
+                board_data['graph_history'] = [graph for graph in board_data['graph_history'] 
+                                             if graph.get('id') != graph_id]
+                
+                # Если график был удален, уведомляем всех
+                if len(board_data['graph_history']) < original_count:
+                    emit('remove_graph', data, room=board_id)
+                    return
+
+    except Exception as e:
+        log_exception(f'Error in graph remove: ', e)
+
+@socketio.on('request_graph_history')
+def handle_request_graph_history():
+    """Запрос истории графиков при подключении"""
+    try:
+        user_sid = request.sid
+        log(f"Request graph history")
+        # Находим доску пользователя
+        board_id = None
+        for bid, users in board_users.items():
+            if user_sid in users:
+                board_id = bid
+                break
+        
+        if board_id and board_id in boards:
+            # Отправляем полную историю графиков
+            emit('graph_history', boards[board_id]['graph_history'])
+            
+    except Exception as e:
+        log_exception(f'Error in handle request graph: ', e)
 
 @socketio.on('add_text')
 def handle_add_text(data):
@@ -596,7 +827,7 @@ def handle_add_text(data):
 
         # Добавляем информацию о пользователе
         data['user_color'] = board_users[board_id][user_sid]['color']
-        data['username'] = board_users[board_id][user_sid]['username']
+        username_ = data['username'] = board_users[board_id][user_sid]['username']
 
         # Сохраняем текст в историю доски
         board_data = boards[board_id]
@@ -606,14 +837,14 @@ def handle_add_text(data):
             text_history.pop(0)
 
         data['timestamp'] = time.time()
-        data['id'] = f"text_{len(text_history)}"
+        id_ = data['id'] = f"text_{len(text_history)}"
         text_history.append(data)
-
+        log(f'Add text: user: {username_}, id: {id_}')
         # Рассылаем всем пользователям в этой доске
         emit('add_text', data, room=board_id)
 
     except Exception as e:
-        app.logger.exception(f'Ошибка обработки текста: {e}')
+        log_exception(f'Error in add text handle: ', e)
 
 @socketio.on('clear_canvas')
 def handle_clear_canvas():
@@ -636,9 +867,10 @@ def handle_clear_canvas():
         'formula_history': [],
         'shape_history': [],
         'text_history': [],
-        'image_history': []
+        'image_history': [],
+        'graph_history': []        
     }
-
+    log(f'Clear canvas by user sid: {user_sid}')
     emit('clear_canvas', room=board_id)
 
 @socketio.on('undo_last')
@@ -671,6 +903,12 @@ def handle_undo(data):
     elif action_type == 'text' and board_data['text_history']:
         board_data['text_history'].pop()
         emit('undo_last', {'type': 'text'}, room=board_id)
+    elif action_type == 'image' and board_data['image_history']:
+        board_data['image_history'].pop()
+        emit('undo_last', {'type': 'text'}, room=board_id)        
+    elif action_type == 'graph' and board_data['graph_history']:  
+        board_data['graph_history'].pop()
+        emit('undo_last', {'type': 'graph'}, room=board_id)        
 
 @socketio.on('update_formula')
 def handle_update_formula(data):
@@ -712,11 +950,13 @@ def handle_update_formula(data):
         #log_warning(f'Формула {formula_id} не найдена, создаем новую')
         data['timestamp'] = time.time()
         board_data['formula_history'].append(data)
+        
+        log(f'Formula is updated')
         socketio.emit('update_formula', data, room=board_id)
         
     except Exception as e:
-        pass
-        #log_error(f'Ошибка обновления формулы: {e}')
+        
+        log_exception(f'Error in formula update: ', e)
 
 @socketio.on('update_text')
 def handle_update_text(data):
@@ -757,16 +997,18 @@ def handle_update_text(data):
         #log_warning(f'Текст {text_id} не найден, создаем новый')
         data['timestamp'] = time.time()
         board_data['text_history'].append(data)
+        log(f'Text is updated')
         socketio.emit('update_text', data, room=board_id)
         
     except Exception as e:
         pass
-        #log_error(f'Ошибка обновления текста: {e}')
+        log_exception(f'Ошибка обновления текста: ', e)
 
 @socketio.on('remove_formula')
 def handle_remove_formula(data):
     """Удаление формулы"""
     formula_id = data.get('id')
+    log('Remove formula with id: {formula_id}')
     if formula_id:
         # Находим доску с этой формулой
         for board_id, board_data in boards.items():
@@ -778,6 +1020,7 @@ def handle_remove_formula(data):
 def handle_remove_text(data):
     """Удаление текста"""
     text_id = data.get('id')
+    log('Remove text with id: {text_id}')
     if text_id:
         # Находим доску с этим текстом
         for board_id, board_data in boards.items():
@@ -785,106 +1028,107 @@ def handle_remove_text(data):
             emit('remove_text', data, room=board_id)
             return
  
-@socketio.on('ping_drawing')
-def handle_ping_drawing(data):
-    """Пинг для поддержания соединения и проверки лага"""
-    client_time = data.get('client_time', time.time())
-    return {
-        'status': 'pong',
-        'client_time': client_time,
-        'server_time': time.time(),
-        'latency': time.time() - client_time
-    } 
-@socketio.on('batch_drawing')
-def handle_batch_drawing(data):
-    """Обработка пакетного рисования (для медленных соединений)"""
-    try:
-        user_sid = request.sid
-        drawings = data.get('drawings', [])
-        board_id = None
+# @socketio.on('ping_drawing')
+# def handle_ping_drawing(data):
+#     """Пинг для поддержания соединения и проверки лага"""
+#     client_time = data.get('client_time', time.time())
+#     return {
+#         'status': 'pong',
+#         'client_time': client_time,
+#         'server_time': time.time(),
+#         'latency': time.time() - client_time
+#     } 
+# @socketio.on('batch_drawing')
+# def handle_batch_drawing(data):
+#     """Обработка пакетного рисования (для медленных соединений)"""
+#     try:
+#         user_sid = request.sid
+#         drawings = data.get('drawings', [])
+#         board_id = None
 
-        # Находим доску пользователя
-        for bid, users in board_users.items():
-            if user_sid in users:
-                board_id = bid
-                break
+#         # Находим доску пользователя
+#         for bid, users in board_users.items():
+#             if user_sid in users:
+#                 board_id = bid
+#                 break
 
-        if not board_id:
-            return {'status': 'error', 'message': 'Board not found'}, 400
+#         if not board_id:
+#             return {'status': 'error', 'message': 'Board not found'}, 400
 
-        username = board_users[board_id][user_sid]['username']
-        confirmed_ids = []
-        server_timestamp = time.time()
+#         username = board_users[board_id][user_sid]['username']
+#         confirmed_ids = []
+#         server_timestamp = time.time()
 
-        for drawing_data in drawings:
-            drawing_data['server_timestamp'] = server_timestamp
-            drawing_data['username'] = username
-            drawing_data['user_sid'] = user_sid
+#         for drawing_data in drawings:
+#             drawing_data['server_timestamp'] = server_timestamp
+#             drawing_data['username'] = username
+#             drawing_data['user_sid'] = user_sid
             
-            # Генерируем ID если нет
-            if 'id' not in drawing_data:
-                drawing_data['id'] = f"draw_{int(server_timestamp * 1000)}_{random.randint(1000, 9999)}"
+#             # Генерируем ID если нет
+#             if 'id' not in drawing_data:
+#                 drawing_data['id'] = f"draw_{int(server_timestamp * 1000)}_{random.randint(1000, 9999)}"
             
-            confirmed_ids.append(drawing_data['id'])
+#             confirmed_ids.append(drawing_data['id'])
             
-            # Сохраняем в историю
-            board_data = boards[board_id]
-            if len(board_data['drawing_history']) > 2000:
-                board_data['drawing_history'].pop(0)
-            board_data['drawing_history'].append(drawing_data)
+#             # Сохраняем в историю
+#             board_data = boards[board_id]
+#             if len(board_data['drawing_history']) > 2000:
+#                 board_data['drawing_history'].pop(0)
+#             board_data['drawing_history'].append(drawing_data)
 
-        # Отправляем все рисунки одним пакетом
-        emit('batch_drawing', {
-            'drawings': drawings,
-            'batch_id': data.get('batch_id', f"batch_{int(server_timestamp * 1000)}"),
-            'user_sid': user_sid
-        }, room=board_id, include_self=False)
+#         # Отправляем все рисунки одним пакетом
+#         log('Batch drawing')
+#         emit('batch_drawing', {
+#             'drawings': drawings,
+#             'batch_id': data.get('batch_id', f"batch_{int(server_timestamp * 1000)}"),
+#             'user_sid': user_sid
+#         }, room=board_id, include_self=False)
 
-        return {'status': 'ok', 'ids': confirmed_ids, 'count': len(drawings)}
+#         return {'status': 'ok', 'ids': confirmed_ids, 'count': len(drawings)}
 
-    except Exception as e:
-        app.logger.exception(f'Ошибка обработки пакетного рисования: {e}')
-        return {'status': 'error', 'message': str(e)}, 500
+#     except Exception as e:
+#         app.logger.exception(f'Ошибка обработки пакетного рисования: {e}')
+#         return {'status': 'error', 'message': str(e)}, 500
 
-@socketio.on('request_missing_drawings')
-def handle_request_missing_drawings(data):
-    """Запрос пропущенных рисунков (для восстановления после обрыва)"""
-    try:
-        user_sid = request.sid
-        board_id = None
+# @socketio.on('request_missing_drawings')
+# def handle_request_missing_drawings(data):
+#     """Запрос пропущенных рисунков (для восстановления после обрыва)"""
+#     try:
+#         user_sid = request.sid
+#         board_id = None
         
-        # Находим доску пользователя
-        for bid, users in board_users.items():
-            if user_sid in users:
-                board_id = bid
-                break
+#         # Находим доску пользователя
+#         for bid, users in board_users.items():
+#             if user_sid in users:
+#                 board_id = bid
+#                 break
 
-        if not board_id or board_id not in boards:
-            return {'status': 'error', 'message': 'Board not found'}, 404
+#         if not board_id or board_id not in boards:
+#             return {'status': 'error', 'message': 'Board not found'}, 404
 
-        last_timestamp = data.get('last_timestamp', 0)
-        max_count = data.get('max_count', 100)
+#         last_timestamp = data.get('last_timestamp', 0)
+#         max_count = data.get('max_count', 100)
         
-        # Находим рисунки, созданные после указанного времени
-        recent_drawings = []
-        for drawing in boards[board_id]['drawing_history']:
-            if drawing.get('server_timestamp', 0) > last_timestamp:
-                # Исключаем рисунки самого пользователя
-                if drawing.get('user_sid') != user_sid:
-                    recent_drawings.append(drawing)
-                if len(recent_drawings) >= max_count:
-                    break
+#         # Находим рисунки, созданные после указанного времени
+#         recent_drawings = []
+#         for drawing in boards[board_id]['drawing_history']:
+#             if drawing.get('server_timestamp', 0) > last_timestamp:
+#                 # Исключаем рисунки самого пользователя
+#                 if drawing.get('user_sid') != user_sid:
+#                     recent_drawings.append(drawing)
+#                 if len(recent_drawings) >= max_count:
+#                     break
 
-        return {
-            'status': 'ok',
-            'drawings': recent_drawings,
-            'count': len(recent_drawings),
-            'latest_timestamp': time.time()
-        }
+#         return {
+#             'status': 'ok',
+#             'drawings': recent_drawings,
+#             'count': len(recent_drawings),
+#             'latest_timestamp': time.time()
+#         }
 
-    except Exception as e:
-        app.logger.exception(f'Ошибка запроса пропущенных рисунков: {e}')
-        return {'status': 'error', 'message': str(e)}, 500
+#     except Exception as e:
+#         app.logger.exception(f'Ошибка запроса пропущенных рисунков: {e}')
+#         return {'status': 'error', 'message': str(e)}, 500
      
 @socketio.on('get_shape_info')
 def handle_get_shape_info(data):
@@ -912,6 +1156,7 @@ def handle_get_shape_info(data):
 def handle_remove_shape(data):
     """Удаление фигуры"""
     shape_id = data.get('id')
+    log(f'Remove shape with {shape_id}')
     if shape_id:
         # Находим доску с этой фигурой
         for board_id, board_data in boards.items():
@@ -928,6 +1173,7 @@ def handle_update_shape(data):
     """Обработка обновления/перемещения фигуры"""
     try:
         shape_id = data.get('id')
+        log(f'Update shape with {shape_id}')
         if not shape_id:
             return
 
@@ -960,6 +1206,8 @@ def handle_update_shape(data):
                 if 'shape' in data: updated_shape['shape'] = data['shape']
                 if 'color' in data: updated_shape['color'] = data['color']
                 if 'brushSize' in data: updated_shape['brushSize'] = data['brushSize']
+                # Добавляем вращение
+                if 'rotation' in data: updated_shape['rotation'] = data['rotation']
                 
                 updated_shape['timestamp'] = time.time()
                 updated_shape['user_sid'] = user_sid  # Добавляем информацию о пользователе
@@ -967,14 +1215,14 @@ def handle_update_shape(data):
                 # Заменяем в истории
                 board_data['shape_history'][i] = updated_shape
                 
-                app.logger.info(f'Фигура {shape_id} обновлена пользователем {user_sid}')
+                log(f'Figure {shape_id} was updated by {user_sid}')
                 
                 # Рассылаем обновление всем, кроме отправителя
                 emit('update_shape', updated_shape, room=board_id, include_self=False)
                 return
         
         # Если фигура не найдена, можно создать её
-        app.logger.warning(f'Фигура {shape_id} не найдена при обновлении')
+        log(f'WARN! Figure {shape_id} is not found when update')
         
         # Добавим как новую фигуру
         data['timestamp'] = time.time()
@@ -985,6 +1233,8 @@ def handle_update_shape(data):
             data['brushSize'] = 5
         if 'color' not in data:
             data['color'] = '#000000'
+        if 'rotation' not in data:
+            data['rotation'] = 0
             
         board_data['shape_history'].append(data)
         
@@ -992,7 +1242,7 @@ def handle_update_shape(data):
         emit('update_shape', data, room=board_id)
                 
     except Exception as e:
-        app.logger.exception(f'Ошибка обновления фигуры: {e}')
+        log_exception(f'Error handle update shape: ', e)
         
 def update_users_list(board_id):
     """
@@ -1055,7 +1305,9 @@ def get_board_info(board_id):
             'drawings': len(boards[board_id]['drawing_history']),
             'formulas': len(boards[board_id]['formula_history']),
             'shapes': len(boards[board_id]['shape_history']),
-            'texts': len(boards[board_id]['text_history'])
+            'images': len(boards[board_id]['image_history']),
+            'texts': len(boards[board_id]['text_history']),
+            'graphs': len(boards[board_id]['graph_history'])
         })
     return jsonify({'error': 'Доска не найдена'}), 404
 
@@ -1110,4 +1362,5 @@ if __name__ == '__main__':
     print(f"  • Присоединиться к доске: http://localhost:5000/?id=ID_ДОСКИ")
     print(f"  • Список активных досок (только для авторизованных): http://localhost:5000/api/boards")
     print("=" * 60)
+    log(f'.............START NEW SESSION..................')
     socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)

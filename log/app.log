@@ -1,0 +1,19 @@
+2025-12-07 03:07:36 - INFO - HTTP REQUEST - IP: 127.0.0.1 - User: admin - Method: GET - Path: / - Browser: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36
+2025-12-07 03:07:36 - INFO - REDIRECT TO BOARDS - IP: 127.0.0.1 - User: admin - Browser: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36
+2025-12-07 03:07:36 - INFO - HTTP RESPONSE - IP: 127.0.0.1 - User: admin - Status: 302 - Duration: 0.007s
+2025-12-07 03:07:36 - INFO - HTTP REQUEST - IP: 127.0.0.1 - User: admin - Method: GET - Path: /boards - Browser: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36
+2025-12-07 03:07:36 - INFO - BOARDS LIST - IP: 127.0.0.1 - User: admin - Browser: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36
+2025-12-07 03:07:36 - INFO - HTTP RESPONSE - IP: 127.0.0.1 - User: admin - Status: 200 - Duration: 0.022s
+2025-12-07 03:07:39 - INFO - HTTP REQUEST - IP: 127.0.0.1 - User: guest - Method: GET - Path: / - Browser: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0
+2025-12-07 03:07:39 - INFO - REDIRECT TO BOARDS - IP: 127.0.0.1 - User: guest - Browser: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0
+2025-12-07 03:07:39 - INFO - HTTP RESPONSE - IP: 127.0.0.1 - User: guest - Status: 302 - Duration: 0.009s
+2025-12-07 03:07:39 - INFO - HTTP REQUEST - IP: 127.0.0.1 - User: guest - Method: GET - Path: /boards - Browser: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0
+2025-12-07 03:07:39 - INFO - HTTP RESPONSE - IP: 127.0.0.1 - User: guest - Status: 302 - Duration: 0.002s
+2025-12-07 03:07:39 - INFO - HTTP REQUEST - IP: 127.0.0.1 - User: guest - Method: GET - Path: /login - Browser: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0
+2025-12-07 03:07:39 - INFO - HTTP RESPONSE - IP: 127.0.0.1 - User: guest - Status: 200 - Duration: 0.011s
+2025-12-07 03:07:44 - INFO - HTTP REQUEST - IP: 127.0.0.1 - User: admin - Method: GET - Path: / - Browser: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36
+2025-12-07 03:07:44 - INFO - BOARD CREATED - IP: 127.0.0.1 - User: admin - Board ID: board_1765046421800_h1jlko67w - Browser: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36
+2025-12-07 03:07:44 - INFO - HTTP RESPONSE - IP: 127.0.0.1 - User: admin - Status: 200 - Duration: 0.031s
+2025-12-07 03:07:45 - INFO - SOCKET CONNECT - User: admin - Board ID: board_1765046421800_h1jlko67w - Socket ID: 2KFuAf04xvYvY6inAAAD - Color: hsl(0, 70%, 50%)
+2025-12-07 03:09:05 - INFO - FORMULA ADDED - User: admin - Board ID: board_1765046421800_h1jlko67w - Formula: unknown
+2025-12-07 03:10:06 - INFO - SOCKET DISCONNECT - User: admin - Board ID: board_1765046421800_h1jlko67w - Socket ID: 2KFuAf04xvYvY6inAAAD
